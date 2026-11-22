@@ -115,21 +115,82 @@ def devanagari_edit_distance(a: str, b: str) -> int:
     return dp[lb]
 
 
+_HARVESTED_LEXICON: dict[str, str] | None = None
+
+
+def get_harvested_lexicon() -> dict[str, str]:
+    global _HARVESTED_LEXICON
+    if _HARVESTED_LEXICON is None:
+        import json, os
+        _HARVESTED_LEXICON = {}
+        for p in ("/work/shrota/checkpoints/shuddha_lexicon.json", "docs/models/shuddha_lexicon.json"):
+            if os.path.exists(p):
+                try:
+                    with open(p, "r", encoding="utf-8") as f:
+                        _HARVESTED_LEXICON.update(json.load(f))
+                    break
+                except Exception:
+                    pass
+    return _HARVESTED_LEXICON
+
+
+def clean_subword_stutter_and_matras(s: str, lang: str = "ne") -> str:
+    """Resolve Devanagari subword CTC boundary matra overlaps and 1-akshara onset stutters."""
+    if not s:
+        return ""
+    # 1. Attach any space-separated dependent vowel sign / matra / halant to preceding word
+    s = re.sub(r"\s+([\u0901-\u0903\u093E-\u094D])", r"\1", s)
+    # 2. Strip any word-initial bare dependent matra / halant
+    s = re.sub(r"(?:^|(?<=\s))[\u0901-\u0903\u093E-\u094D]+", "", s)
+    # 3. Collapse consecutive duplicate/conflicting dependent vowel signs (e.g. ाा -> ा)
+    s = re.sub(r"([\u093E-\u094C])[\u093E-\u094C]+", r"\1", s)
+    s = re.sub(r"\u094D\u094D+", "\u094D", s)
+    # 4. Fix leading digit before consonant-halant cluster (e.g. 1्यपि -> यद्यपि)
+    s = re.sub(r"(?:^|(?<=\s))[0-9\u0966-\u096F](?=[\u0915-\u0939]\u094D)", "यद", s)
+    # 5. Strip stray word-final halant in Nepali (Sanskrit preserves final म्/त्)
+    if lang == "ne":
+        s = re.sub(r"(?<![मदतस])\u094D(?=\s|[।,?!]|$)", "", s)
+    # 6. Collapse CTC subword onset stutter: 1-akshara word followed by word starting with same consonant
+    words = s.split()
+    out_w: list[str] = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        w_clean = w.rstrip("।,?!")
+        if i + 1 < len(words):
+            nxt = words[i + 1]
+            if (
+                1 <= len(w_clean) <= 2
+                and len(nxt) >= 2
+                and w_clean[0] == nxt[0]
+                and w_clean not in ("र", "न", "छ", "हो", "की", "कि", "यो", "ती", "सो", "के", "को")
+            ):
+                i += 1
+                continue
+        out_w.append(w)
+        i += 1
+    return " ".join(out_w)
+
+
 def apply_shuddha_refinement(
     raw_text: str,
     shuddha_model: torch.nn.Module | None = None,
     tokenizer: ShrotaTokenizer | None = None,
     add_punct: bool = True,
+    lang: str = "ne",
 ) -> str:
     """Apply Shrota-Shuddha neural refinement + strict non-hallucinating orthographic rules."""
     s = normalize_text(raw_text, keep_punct=True)
     if not s:
         return ""
+    s = clean_subword_stutter_and_matras(s, lang=lang)
 
-    punct_tags_pred = None
-    # 1. Neural Shrota-Shuddha pass with strict edit-distance guard (<= 2 matra/char edits per token)
+    # Preserve any punctuation already emitted by the acoustic model
+    had_question = "?" in s
+
+    # 1. Neural Shrota-Shuddha pass with strict edit-distance guard (<= 1 matra/char edit per token)
     if shuddha_model is not None and tokenizer is not None:
-        ids = tokenizer.encode(s, keep_punct=False) if hasattr(tokenizer, "keep_punct") else tokenizer.encode(s)
+        ids = tokenizer.encode(s, punct_mode="nopunct")
         if ids:
             inp = torch.tensor([ids], dtype=torch.long, device=next(shuddha_model.parameters()).device)
             with torch.no_grad():
@@ -138,10 +199,9 @@ def apply_shuddha_refinement(
                 top_probs, top_ids = probs.max(dim=-1)
                 pred_ids = top_ids.tolist()
                 pred_confs = top_probs.tolist()
-                punct_tags_pred = p_logits[0].argmax(dim=-1).tolist()
             safe_ids = []
             for orig_id, new_id, conf in zip(ids, pred_ids, pred_confs):
-                if orig_id == new_id or conf < 0.85:
+                if orig_id == new_id or conf < 0.88:
                     safe_ids.append(orig_id)
                 else:
                     t_orig = tokenizer.id_to_token.get(orig_id, "").lstrip(WORD_BOUNDARY)
@@ -150,9 +210,10 @@ def apply_shuddha_refinement(
                         safe_ids.append(new_id)
                     else:
                         safe_ids.append(orig_id)
-            s = tokenizer.decode(safe_ids)
+            s = clean_subword_stutter_and_matras(tokenizer.decode(safe_ids), lang=lang)
 
-    # 2. Postposition attachment ('नेपाल को' -> 'नेपालको') and hraswa-dirgha lexicon cleanup
+    # 2. Hraswa-dirgha lexicon cleanup and guarded postposition attachment
+    harvested = get_harvested_lexicon()
     words = s.split()
     merged: list[str] = []
     for w in words:
@@ -160,11 +221,19 @@ def apply_shuddha_refinement(
         trail_p = w[len(clean_w) :]
         if clean_w in NEPALI_SHUDDHA_LEXICON:
             clean_w = NEPALI_SHUDDHA_LEXICON[clean_w]
+        elif clean_w in harvested:
+            clean_w = harvested[clean_w]
         # Fix suffix -हरु -> -हरू (standard Nepal Academy dirgha plural)
-        if clean_w.endswith("हरु") and len(clean_w) > 3:
+        if lang == "ne" and clean_w.endswith("हरु") and len(clean_w) > 3:
             clean_w = clean_w[:-3] + "हरू"
-        if merged and clean_w in POSTPOSITIONS and not merged[-1].endswith(("।", ",", "?", "!")):
-            # Attach freestanding Nepali postposition to preceding noun/pronoun
+        if (
+            add_punct
+            and lang == "ne"
+            and merged
+            and clean_w in ("हरू", "हरूको", "हरूलाई", "हरूमा")
+            and not merged[-1].endswith(("।", ",", "?", "!", "हरू"))
+            and not any(ch.isdigit() for ch in merged[-1])
+        ):
             merged[-1] = merged[-1] + clean_w + trail_p
         else:
             merged.append(clean_w + trail_p)
@@ -176,7 +245,7 @@ def apply_shuddha_refinement(
     if add_punct:
         last_w = merged[-1]
         if not last_w.endswith(("।", "?", "!")):
-            has_q = any(w.rstrip("।,?!") in QUESTION_WORDS for w in merged)
+            has_q = had_question or any(w.rstrip("।,?!") in QUESTION_WORDS for w in merged)
             if has_q and last_w.rstrip("।,?!") in CLAUSE_END_VERBS | QUESTION_WORDS:
                 merged[-1] = last_w + "?"
             elif len(merged) >= 2 or last_w in CLAUSE_END_VERBS:

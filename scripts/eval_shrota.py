@@ -75,13 +75,15 @@ def evaluate_end_to_end_with_shuddha(
                 prev1_tok = best_id
             prev = cid
 
+        lang = r.get("lang", "sa" if "vedic" in r.get("domain", "") else "ne")
         raw_tx = tokenizer.decode(dedup_ids)
-        add_p = r.get("domain") != "slr54" or r.get("punct_mode") == "punct"
+        add_p = r.get("punct_mode") == "punct" or r.get("domain") in ("fleurs_ne_np", "conv_story")
         shuddha_tx = apply_shuddha_refinement(
             raw_tx,
             shuddha_model=shuddha_model,
             tokenizer=tokenizer,
             add_punct=add_p,
+            lang=lang,
         )
         refs.append(r["text"])
         raw_hyps.append(raw_tx)

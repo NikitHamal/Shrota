@@ -130,12 +130,19 @@ def build_shuddha_training_pairs(
     base_ckpt = CKPT_DIR / "shrota_base_best.pt"
     if base_ckpt.exists() and acoustic_slice:
         try:
+            from collections import Counter, defaultdict
             from shrota.tdt_ctc import ShrotaASRModel
+            clean_word_freq: Counter[str] = Counter()
+            for cs in clean_sentences:
+                for cw in normalize_text(cs, keep_punct=False).split():
+                    clean_word_freq[cw] += 1
+            word_pair_counts: dict[str, Counter[str]] = defaultdict(Counter)
+
             asr_base = ShrotaASRModel.build_base(vocab_size=tokenizer.vocab_size).to(device).eval()
             asr_base.load_state_dict(torch.load(base_ckpt, map_location=device, weights_only=True))
             with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                for b_start in range(0, min(4096, len(acoustic_slice)), 128):
-                    chunk = acoustic_slice[b_start : b_start + 128]
+                for b_start in range(0, min(8000, len(acoustic_slice)), 256):
+                    chunk = acoustic_slice[b_start : b_start + 256]
                     max_t = max(x["mel"].size(0) for x in chunk)
                     max_t += (8 - max_t % 8) % 8
                     m_pad = torch.zeros(len(chunk), max_t, 80, device=device)
@@ -159,8 +166,24 @@ def build_shuddha_training_pairs(
                                 torch.tensor(c_ids, dtype=torch.long),
                                 torch.zeros(len(c_ids), dtype=torch.long),
                             ))
+                        hyp_w = normalize_text(tokenizer.decode(dedup), keep_punct=False).split()
+                        ref_w = normalize_text(x["text"], keep_punct=False).split()
+                        if len(hyp_w) == len(ref_w):
+                            for hw, rw in zip(hyp_w, ref_w):
+                                if hw != rw and len(hw) >= 2 and len(rw) >= 2 and abs(len(hw) - len(rw)) <= 2:
+                                    diffs = sum(1 for a, c in zip(hw, rw) if a != c) + abs(len(hw) - len(rw))
+                                    if diffs <= 2:
+                                        word_pair_counts[hw][rw] += 1
+            harvested_lex = {}
+            for hw, cnts in word_pair_counts.items():
+                best_rw, best_c = cnts.most_common(1)[0]
+                tot_c = sum(cnts.values())
+                if best_c >= 2 and best_c / tot_c >= 0.65 and clean_word_freq[hw] < best_c:
+                    harvested_lex[hw] = best_rw
+            (CKPT_DIR / "shuddha_lexicon.json").write_text(json.dumps(harvested_lex, ensure_ascii=False, indent=2))
+            Path("/work/shrota/repo/docs/models/shuddha_lexicon.json").write_text(json.dumps(harvested_lex, ensure_ascii=False, indent=2))
             del asr_base
-            print(f"[Shrota-Shuddha] Harvested {len(real_asr_pairs)} exact-length real acoustic-to-gold pairs.", flush=True)
+            print(f"[Shrota-Shuddha] Harvested {len(real_asr_pairs)} exact-length subword pairs & {len(harvested_lex)} word pairs.", flush=True)
         except Exception as e:
             print(f"[Shrota-Shuddha] Note on acoustic harvest: {e}", flush=True)
 

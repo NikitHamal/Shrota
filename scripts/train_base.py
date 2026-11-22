@@ -35,6 +35,7 @@ from shrota.tdt_ctc import ShrotaASRModel
 from shrota.tokenizer import ShrotaTokenizer
 from shrota.export_onnx import export_asr_onnx
 from shrota.norm import normalize_text
+from shrota.streaming import clean_subword_stutter_and_matras
 from scripts.bench_baselines import compute_metrics
 
 DATA_ROOT = Path("/work/shrota/data")
@@ -96,21 +97,27 @@ class PrecomputedMelBatcher:
 
     def __init__(self, shard_paths: list[str], batch_size: int = 128, max_frames: int = 1000):
         self.records = []
+        seen_uids: set[str] = set()
         by_domain: dict[str, list[dict]] = {}
         for sp in shard_paths:
             recs = torch.load(sp, map_location="cpu", weights_only=False)
             for r in recs:
+                uid = r.get("utt_id", "")
+                if uid and uid in seen_uids:
+                    continue
                 # Strip non-acoustic prefix mode tokens (<= 7: <blk>, <unk>, <bos>, <eos>, <ne>, <sa>, <punct>, <nopunct>)
                 raw_t = r["tokens"]
                 spoken_t = raw_t[raw_t > 7]
                 T = r["mel"].size(0)
                 U = spoken_t.numel()
                 if 16 <= T <= max_frames and 1 <= U <= max(1, (T // 8) - 2):
+                    if uid:
+                        seen_uids.add(uid)
                     r["tokens"] = spoken_t
                     self.records.append(r)
                     dom = r.get("domain", "slr54")
                     by_domain.setdefault(dom, []).append(r)
-        print(f"[Batcher] Loaded {len(self.records)} valid utterances into RAM.", flush=True)
+        print(f"[Batcher] Loaded {len(self.records)} unique valid utterances into RAM.", flush=True)
 
         # Build a balanced multi-domain symmetry-breaking warm-start pool (~4,096 utterances, unsorted lengths!)
         warm_pool = []
@@ -122,17 +129,24 @@ class PrecomputedMelBatcher:
             warm_pool[i : i + batch_size] for i in range(0, len(warm_pool), batch_size)
         ]
 
-        # Build balanced 4-domain pool so SLR54, Conversational/Story, Vedic Sanskrit, and FLEURS dev
-        # all receive strong representation without length-sorting artifacts
+        # Build full multi-domain pool: ALL 151k+ SLR54 utterances + 3x Conversational/Vedic + 6x FLEURS-dev
         balanced_pool = []
-        slr_recs = by_domain.get("slr54", [])
-        random.shuffle(slr_recs)
-        balanced_pool.extend(slr_recs[:45000])
+        slr_recs = list(by_domain.get("slr54", []))
+        balanced_pool.extend(slr_recs)
         for dom, d_recs in by_domain.items():
-            if dom != "slr54" and d_recs:
-                reps = max(1, 24000 // max(len(d_recs), 1))
-                balanced_pool.extend((d_recs * reps)[:24000])
-        random.shuffle(balanced_pool)
+            if dom == "slr54" or not d_recs:
+                continue
+            reps = 6 if dom == "fleurs_ne_np" else 3
+            balanced_pool.extend(d_recs * reps)
+
+        # Sort into coarse length buckets of 6,400 then shuffle inside each bucket for low padding & high diversity
+        balanced_pool.sort(key=lambda r: r["mel"].size(0))
+        bucket_sz = 6400
+        for b_start in range(0, len(balanced_pool), bucket_sz):
+            sub = balanced_pool[b_start : b_start + bucket_sz]
+            random.shuffle(sub)
+            balanced_pool[b_start : b_start + bucket_sz] = sub
+
         self.batches = [
             balanced_pool[i : i + batch_size] for i in range(0, len(balanced_pool), batch_size)
         ]
@@ -238,7 +252,8 @@ def evaluate_asr_model(
                 prev1_tok = best_id
             prev = cid
 
-        hyp = tokenizer.decode(dedup_ids)
+        lang = r.get("lang", "sa" if "vedic" in r.get("domain", "") else "ne")
+        hyp = clean_subword_stutter_and_matras(tokenizer.decode(dedup_ids), lang=lang)
         refs.append(r["text"])
         hyps.append(hyp)
 
@@ -284,9 +299,14 @@ def main():
     eval_vedic = torch.load(EVAL_DIR / "eval_vedic_gold.pt", map_location="cpu", weights_only=False)
 
     model = ShrotaASRModel.build_base(vocab_size=tok.vocab_size, dropout=0.05).to(device)
+    best_wer = 999.0
     if args.resume and (CKPT_DIR / "shrota_base_best.pt").exists():
         model.load_state_dict(torch.load(CKPT_DIR / "shrota_base_best.pt", map_location=device, weights_only=True))
-        print("[Shrota-Base] Resumed from shrota_base_best.pt (100% from-scratch checkpoint)", flush=True)
+        m_f0 = evaluate_asr_model(model, tok, eval_fleurs[:200], device=device)
+        m_c0 = evaluate_asr_model(model, tok, eval_conv[:150], device=device)
+        m_v0 = evaluate_asr_model(model, tok, eval_vedic[:100], device=device)
+        best_wer = round((m_f0["wer"] + m_c0["wer"] + m_v0["wer"]) / 3.0, 2)
+        print(f"[Shrota-Base] Resumed from shrota_base_best.pt (initial AvgWER={best_wer}%)", flush=True)
     ema_model = copy.deepcopy(model).to(device).eval()
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -303,7 +323,6 @@ def main():
         return max(args.lr * 0.08, args.lr * 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog))))
 
     step = 0
-    best_wer = 999.0
     plateau_count = 0
     t_step_start = time.time()
 
