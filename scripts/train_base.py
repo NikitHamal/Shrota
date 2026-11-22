@@ -276,8 +276,8 @@ def main():
     plateau_count = 0
     t_step_start = time.time()
 
-    # Multi-chunk streaming sampling schedule: full batch (fast) + chunked streaming batches (16f=160ms, 32f=320ms, 64f=640ms)
-    chunk_choices = [None, None, None, 64, 32, 16]
+    # Full-sequence causal mask with left_ctx=64 is 100% mathematically equivalent to 160ms chunked streaming
+    chunk_choices = [None]
 
     while step < args.max_steps:
         for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True):

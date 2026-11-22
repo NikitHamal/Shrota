@@ -1,0 +1,71 @@
+{
+  "whisper_small": {
+    "model": "openai/whisper-small",
+    "params_m": 241.7,
+    "size_mb": 483.4,
+    "streaming": false,
+    "latency_ms": 1850,
+    "cpu_1thread_rtf": 0.735,
+    "domains": {
+      "eval_fleurs_ne_np": {
+        "wer": 103.41,
+        "cer": 63.64,
+        "punct_f1": 13.15,
+        "num_utts": 725
+      },
+      "eval_slr54_gold": {
+        "wer": 244.58,
+        "cer": 108.72,
+        "punct_f1": 30.77,
+        "num_utts": 484
+      },
+      "eval_conv_story": {
+        "wer": 90.33,
+        "cer": 52.41,
+        "punct_f1": 12.63,
+        "num_utts": 300
+      },
+      "eval_vedic_gold": {
+        "wer": 121.96,
+        "cer": 59.26,
+        "punct_f1": 0.0,
+        "num_utts": 200
+      }
+    }
+  },
+  "mms_1b_npi": {
+    "model": "facebook/mms-1b-all (npi)",
+    "params_m": 965.5,
+    "size_mb": 1931.0,
+    "streaming": false,
+    "latency_ms": 940,
+    "cpu_1thread_rtf": 0.78,
+    "domains": {
+      "eval_fleurs_ne_np": {
+        "wer": 31.31,
+        "cer": 8.95,
+        "punct_f1": 2.87,
+        "num_utts": 725
+      },
+      "eval_slr54_gold": {
+        "wer": 73.56,
+        "cer": 33.67,
+        "punct_f1": 0.0,
+        "num_utts": 484
+      },
+      "eval_conv_story": {
+        "wer": 73.93,
+        "cer": 23.39,
+        "punct_f1": 0.63,
+        "num_utts": 300
+      },
+      "eval_vedic_gold": {
+        "wer": 115.27,
+        "cer": 72.58,
+        "punct_f1": 0.0,
+        "num_utts": 200
+      }
+    }
+  },
+  "timestamp": "2026-11-22 09:48:20 UTC"
+}

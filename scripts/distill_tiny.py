@@ -105,7 +105,7 @@ def main():
     plateau_count = 0
     t_step_start = time.time()
     temp = 2.0
-    chunk_choices = [None, None, 64, 32, 16]
+    chunk_choices = [None]
 
     while step < args.max_steps:
         for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True):
