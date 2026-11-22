@@ -11,7 +11,9 @@ const state = {
   audioCtx: null,
   micStream: null,
   ortSession: null,
+  ortEncoderSession: null,
   vocab: null,
+  harvestedLexicon: {},
 };
 
 const NEPALI_SHUDDHA_MAP = {
@@ -42,14 +44,17 @@ const NEPALI_SHUDDHA_MAP = {
 const POSTPOSITIONS = new Set(["को", "का", "की", "मा", "ले", "लाई", "बाट", "देखि", "सँग", "द्वारा", "हरू"]);
 
 export function applyClientShuddha(rawText, enablePunct = true) {
-  const s = normalizeText(rawText, enablePunct);
+  let s = normalizeText(rawText, enablePunct);
   if (!s) return "";
+  s = s.replace(/\s+([\u0901-\u0903\u093E-\u094D])/g, "$1");
+  s = s.replace(/([\u093E-\u094C])[\u093E-\u094C]+/g, "$1");
   const words = s.split(" ");
   const merged = [];
   for (const w of words) {
     const clean = w.replace(/[।,?!]+$/g, "");
-    const fixed = NEPALI_SHUDDHA_MAP[clean] || (clean.endsWith("हरु") ? clean.slice(0, -3) + "हरू" : clean);
-    if (merged.length > 0 && POSTPOSITIONS.has(fixed)) {
+    const lexFixed = state.harvestedLexicon[clean] || NEPALI_SHUDDHA_MAP[clean] || clean;
+    const fixed = lexFixed.endsWith("हरु") && lexFixed.length > 3 ? lexFixed.slice(0, -3) + "हरू" : lexFixed;
+    if (merged.length > 0 && POSTPOSITIONS.has(fixed) && !/\d/.test(merged[merged.length - 1])) {
       merged[merged.length - 1] = merged[merged.length - 1] + fixed;
     } else {
       merged.push(fixed);
@@ -317,6 +322,14 @@ async function initWasmSessions() {
       const tokData = await tokResp.json();
       state.vocab = tokData.vocab;
     }
+    try {
+      const lexResp = await fetch("models/shuddha_lexicon.json");
+      if (lexResp.ok) {
+        const lexData = await lexResp.json();
+        state.harvestedLexicon = lexData.pairs || lexData || {};
+      }
+    } catch (_) {}
+
     state.ortSession = await window.ort.InferenceSession.create("models/shrota_shuddha_int8.onnx", {
       executionProviders: ["wasm"],
     });
@@ -325,10 +338,28 @@ async function initWasmSessions() {
     await state.ortSession.run({
       input_ids: new window.ort.Tensor("int64", dummyIds, [1, dummyIds.length]),
     });
-    const wasmMs = (performance.now() - t0).toFixed(2);
+    let wasmMs = (performance.now() - t0).toFixed(2);
+
+    try {
+      state.ortEncoderSession = await window.ort.InferenceSession.create("models/shrota_tiny_encoder_int8.onnx", {
+        executionProviders: ["wasm"],
+      });
+      const tEnc0 = performance.now();
+      await state.ortEncoderSession.run({
+        mel: new window.ort.Tensor("float32", new Float32Array(1 * 16 * 80), [1, 16, 80]),
+        cache_s0: new window.ort.Tensor("float32", new Float32Array(1 * 80 * 1), [1, 80, 1]),
+        cache_s1: new window.ort.Tensor("float32", new Float32Array(1 * 128 * 1), [1, 128, 1]),
+        cache_s2: new window.ort.Tensor("float32", new Float32Array(1 * 128 * 1), [1, 128, 1]),
+        cache_k: new window.ort.Tensor("float32", new Float32Array(8 * 1 * 4 * 64 * 32), [8, 1, 4, 64, 32]),
+        cache_v: new window.ort.Tensor("float32", new Float32Array(8 * 1 * 4 * 64 * 32), [8, 1, 4, 64, 32]),
+        cache_conv: new window.ort.Tensor("float32", new Float32Array(8 * 1 * 128 * 8), [8, 1, 128, 8]),
+      });
+      wasmMs = (performance.now() - tEnc0).toFixed(2);
+    } catch (_) {}
+
     const latBadge = document.getElementById("live-latency-badge");
     if (latBadge) {
-      latBadge.textContent = `WASM Latency: ${wasmMs} ms`;
+      latBadge.textContent = `WASM 160ms Chunk: ${wasmMs} ms`;
     }
   } catch (e) {
     // Fallback cleanly if WASM headers are restricted on local file:// preview

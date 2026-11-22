@@ -143,21 +143,26 @@ def upload_file(local_path: str, remote_path: str, mode: int = 0o644) -> str:
 
 
 def download_file(remote_path: str, local_path: str) -> str:
-    py_code = (
-        "import base64\n"
-        f"with open({remote_path!r}, 'rb') as f:\n"
-        "    print('B64_START:' + base64.b64encode(f.read()).decode('ascii') + ':B64_END')\n"
-    )
-    res = run_code(py_code, timeout=300)
-    raw = json.dumps(res)
-    if "B64_START:" not in raw:
-        raise RuntimeError(f"Failed to download {remote_path}: {raw[:400]}")
-    b64 = raw.split("B64_START:", 1)[1].split(":B64_END", 1)[0]
+    size_out = run_bash(f"stat -c %s {remote_path}", timeout=30).strip()
+    total_size = int(size_out.splitlines()[-1].strip())
     os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
-    data = base64.b64decode(b64)
-    with open(local_path, "wb") as f:
-        f.write(data)
-    return f"Downloaded {local_path} ({len(data)} bytes)"
+    chunk_sz = 384 * 1024
+    with open(local_path, "wb") as out_f:
+        for offset in range(0, total_size, chunk_sz):
+            py_code = (
+                "import base64\n"
+                f"with open({remote_path!r}, 'rb') as f:\n"
+                f"    f.seek({offset})\n"
+                f"    d = f.read({chunk_sz})\n"
+                "print('B64_START:' + base64.b64encode(d).decode('ascii') + ':B64_END')\n"
+            )
+            res = run_code(py_code, timeout=120)
+            raw = json.dumps(res)
+            if "B64_START:" not in raw:
+                raise RuntimeError(f"Failed chunk at {offset} of {remote_path}: {raw[:300]}")
+            b64 = raw.split("B64_START:", 1)[1].split(":B64_END", 1)[0]
+            out_f.write(base64.b64decode(b64))
+    return f"Downloaded {local_path} ({os.path.getsize(local_path)} bytes)"
 
 
 def main():

@@ -2,19 +2,19 @@
   "model": "Shrota-Shuddha",
   "params_m": 1.59,
   "size_int8_mb": 1.807,
-  "clause_latency_ms": 0.53,
+  "clause_latency_ms": 0.54,
   "before_shuddha": {
-    "wer": 30.27,
-    "cer": 1.5,
+    "wer": 30.31,
+    "cer": 1.46,
     "punct_f1": 0.0,
     "num_utts": 725,
-    "hraswa_dirgha_acc": 75.63
+    "hraswa_dirgha_acc": 76.14
   },
   "after_shuddha": {
-    "wer": 10.92,
-    "cer": 1.64,
-    "punct_f1": 70.72,
+    "wer": 19.32,
+    "cer": 1.68,
+    "punct_f1": 59.06,
     "num_utts": 725,
-    "hraswa_dirgha_acc": 89.64
+    "hraswa_dirgha_acc": 85.59
   }
 }

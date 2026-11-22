@@ -164,20 +164,20 @@ def get_harvested_lexicon() -> tuple[dict[str, str], dict[str, int]]:
 
 def resolve_homophone_word(w: str, harvested: dict[str, str], vocab_freq: dict[str, int]) -> str:
     """Resolve 1-character Nepali hraswa-dirgha / sibilant / labial homophone if word is OOV."""
-    if w in harvested:
-        return harvested[w]
     if w in NEPALI_SHUDDHA_LEXICON:
         return NEPALI_SHUDDHA_LEXICON[w]
-    if not vocab_freq or vocab_freq.get(w, 0) >= 3:
+    if w in harvested and vocab_freq.get(w, 0) == 0:
+        return harvested[w]
+    if not vocab_freq or vocab_freq.get(w, 0) >= 1:
         return w
     best_cand = w
-    best_freq = vocab_freq.get(w, 0) * 8
+    best_freq = 25
     for i, ch in enumerate(w):
         for src_c, dst_c in HOMOPHONE_SWAPS:
             if ch == src_c:
                 cand = w[:i] + dst_c + w[i + 1 :]
                 cf = vocab_freq.get(cand, 0)
-                if cf > max(best_freq, 4):
+                if cf > best_freq:
                     best_freq = cf
                     best_cand = cand
     return best_cand
@@ -279,10 +279,6 @@ def apply_shuddha_refinement(
             and clean_w in POSTPOSITIONS
             and not merged[-1].endswith(("।", ",", "?", "!", "हरू"))
             and not any(ch.isdigit() for ch in merged[-1])
-            and (
-                clean_w in ("हरू", "हरूको", "हरूलाई", "हरूमा")
-                or vocab_freq.get(merged[-1] + clean_w, 0) >= 3
-            )
         ):
             merged[-1] = merged[-1] + clean_w + trail_p
         else:
