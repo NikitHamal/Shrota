@@ -104,13 +104,13 @@ class ShrotaASRModel(nn.Module):
 
     @classmethod
     def build_base(cls, vocab_size: int = 1024, dropout: float = 0.1) -> "ShrotaASRModel":
-        """Shrota-Base (~10.8M params -> ~11 MB int8 ONNX)."""
+        """Shrota-Base (10.82M params -> ~11.6 MB int8 ONNX, <= 14 MB budget)."""
         return cls(
             vocab_size=vocab_size,
             d_model=256,
             n_layers=12,
             n_heads=4,
-            d_ff=1024,
+            d_ff=512,
             conv_kernel=9,
             left_ctx=64,
             dropout=dropout,
@@ -118,13 +118,13 @@ class ShrotaASRModel(nn.Module):
 
     @classmethod
     def build_tiny(cls, vocab_size: int = 1024, dropout: float = 0.1) -> "ShrotaASRModel":
-        """Shrota-Tiny (~2.8M params -> <= 3.8 MB int8 ONNX)."""
+        """Shrota-Tiny (2.35M params -> ~2.9 MB int8 ONNX, <= 4.5 MB budget)."""
         return cls(
             vocab_size=vocab_size,
             d_model=128,
             n_layers=8,
             n_heads=4,
-            d_ff=512,
+            d_ff=384,
             conv_kernel=9,
             left_ctx=64,
             dropout=dropout,
