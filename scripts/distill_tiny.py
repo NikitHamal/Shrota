@@ -108,8 +108,11 @@ def main():
     chunk_choices = [None]
 
     while step < args.max_steps:
-        for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True):
+        is_warm = step < 650
+        for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True, warm_phase=is_warm):
             step += 1
+            if step == 650:
+                break
             lr = get_lr(step)
             for pg in optimizer.param_groups:
                 pg["lr"] = lr
@@ -120,7 +123,7 @@ def main():
             targets = targets.to(device, non_blocking=True)
             target_lens = target_lens.to(device, non_blocking=True)
 
-            mel_aug = apply_spec_and_mic_augment(mel, mel_lens)
+            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if step > 900 else mel
             c_frames = random.choice(chunk_choices)
 
             optimizer.zero_grad(set_to_none=True)
@@ -147,7 +150,7 @@ def main():
                     reduction="batchmean",
                 ) * (temp * temp)
 
-                loss = 0.60 * gt_loss + 0.40 * kd_loss
+                loss = 0.65 * gt_loss + 0.35 * kd_loss
 
             if torch.isnan(loss) or torch.isinf(loss):
                 continue
@@ -155,7 +158,10 @@ def main():
             loss.backward()
             torch.nn.utils.clip_grad_norm_(student.parameters(), 5.0)
             optimizer.step()
-            update_ema(ema_student, student, decay=0.997 if step < 1500 else 0.999)
+            if step <= 800:
+                ema_student.load_state_dict(student.state_dict())
+            else:
+                update_ema(ema_student, student, decay=0.995)
 
             if step == 50:
                 dt = time.time() - t_step_start

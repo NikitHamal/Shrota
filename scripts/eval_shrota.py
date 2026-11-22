@@ -64,9 +64,21 @@ def evaluate_end_to_end_with_shuddha(
 
         dedup_ids = []
         prev = blank_id
-        for cid in pred_ids:
+        prev2_tok = tokenizer.bos_id
+        prev1_tok = tokenizer.bos_id
+        for t_idx, cid in enumerate(pred_ids):
             if cid != blank_id and cid != prev:
-                dedup_ids.append(cid)
+                pred_state = asr_model.predictor.forward_step(
+                    torch.tensor([prev2_tok], device=device),
+                    torch.tensor([prev1_tok], device=device),
+                )
+                tdt_logits, _ = asr_model.joint.forward_step(enc_out[:, t_idx, :], pred_state)
+                comb = 0.85 * torch.nn.functional.log_softmax(ctc_logits[t_idx : t_idx + 1], dim=-1) + 0.15 * torch.nn.functional.log_softmax(tdt_logits, dim=-1)
+                comb[:, blank_id] = -1e9
+                best_id = int(comb[0].argmax(dim=-1).item())
+                dedup_ids.append(best_id)
+                prev2_tok = prev1_tok
+                prev1_tok = best_id
             prev = cid
 
         raw_tx = tokenizer.decode(dedup_ids)

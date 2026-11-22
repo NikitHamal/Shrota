@@ -110,17 +110,59 @@ def build_shuddha_training_pairs(
     tokenizer: ShrotaTokenizer,
     shard_paths: list[str],
     max_sentences: int = 120000,
+    device: str = "cuda",
 ) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-    """Build (noisy_ids, clean_ids, punct_tags) aligned subword training examples."""
+    """Build (noisy_ids, clean_ids, punct_tags) from real Shrota-Base ASR errors + Nepali linguistic corruptions."""
     clean_sentences = []
+    acoustic_slice = []
     for sp in shard_paths:
         recs = torch.load(sp, map_location="cpu", weights_only=False)
         for r in recs:
             tx = r["text"]
             if len(tx) >= 8:
                 clean_sentences.append(tx)
+                if len(acoustic_slice) < 8000 and r["mel"].size(0) <= 640:
+                    acoustic_slice.append(r)
         if len(clean_sentences) >= max_sentences:
             break
+
+    real_asr_pairs = []
+    base_ckpt = CKPT_DIR / "shrota_base_best.pt"
+    if base_ckpt.exists() and acoustic_slice:
+        try:
+            from shrota.tdt_ctc import ShrotaASRModel
+            asr_base = ShrotaASRModel.build_base(vocab_size=tokenizer.vocab_size).to(device).eval()
+            asr_base.load_state_dict(torch.load(base_ckpt, map_location=device, weights_only=True))
+            with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                for b_start in range(0, min(4096, len(acoustic_slice)), 128):
+                    chunk = acoustic_slice[b_start : b_start + 128]
+                    max_t = max(x["mel"].size(0) for x in chunk)
+                    max_t += (8 - max_t % 8) % 8
+                    m_pad = torch.zeros(len(chunk), max_t, 80, device=device)
+                    for idx_c, x in enumerate(chunk):
+                        m_pad[idx_c, : x["mel"].size(0)] = x["mel"].float()
+                    enc = asr_base.encoder(m_pad)
+                    lgs = asr_base.ctc_head(enc).argmax(dim=-1).cpu()
+                    for idx_c, x in enumerate(chunk):
+                        el = x["mel"].size(0) // 8
+                        pids = lgs[idx_c, :el].tolist()
+                        dedup = []
+                        prev = 0
+                        for p in pids:
+                            if p != 0 and p != prev:
+                                dedup.append(p)
+                            prev = p
+                        c_ids = [int(t) for t in x["tokens"].tolist() if int(t) > 7]
+                        if len(dedup) == len(c_ids) and 2 <= len(c_ids) <= 128:
+                            real_asr_pairs.append((
+                                torch.tensor(dedup, dtype=torch.long),
+                                torch.tensor(c_ids, dtype=torch.long),
+                                torch.zeros(len(c_ids), dtype=torch.long),
+                            ))
+            del asr_base
+            print(f"[Shrota-Shuddha] Harvested {len(real_asr_pairs)} exact-length real acoustic-to-gold pairs.", flush=True)
+        except Exception as e:
+            print(f"[Shrota-Shuddha] Note on acoustic harvest: {e}", flush=True)
 
     # Add curated high-value grammatical & hraswa-dirgha canonical sentences
     canonical = [
@@ -196,6 +238,7 @@ def build_shuddha_training_pairs(
                 torch.tensor(punct_tags, dtype=torch.long),
             ))
 
+    pairs.extend(real_asr_pairs * 3)
     print(f"[Shrota-Shuddha] Built {len(pairs)} aligned grammatical & hraswa-dirgha training pairs.", flush=True)
     return pairs
 
