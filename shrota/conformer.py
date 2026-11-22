@@ -72,11 +72,15 @@ class CausalSubsampling8x(nn.Module):
 
         next_s1 = x1[:, :, -1:]
         x1_pad = torch.cat([cache_s1, x1], dim=2)
-        x2 = self.act1(self.norm1(self.pw1(self.dw1(x1_pad)).transpose(1, 2))).transpose(1, 2)  # (B, d_model, T//4)
+        dw1_out = self.dw1(x1_pad).transpose(1, 2)
+        pw1_out = F.linear(dw1_out, self.pw1.weight.squeeze(-1), self.pw1.bias)
+        x2 = self.act1(self.norm1(pw1_out)).transpose(1, 2)  # (B, d_model, T//4)
 
         next_s2 = x2[:, :, -1:]
         x2_pad = torch.cat([cache_s2, x2], dim=2)
-        x3 = self.act2(self.norm2(self.pw2(self.dw2(x2_pad)).transpose(1, 2)))  # (B, T//8, d_model)
+        dw2_out = self.dw2(x2_pad).transpose(1, 2)
+        pw2_out = F.linear(dw2_out, self.pw2.weight.squeeze(-1), self.pw2.bias)
+        x3 = self.act2(self.norm2(pw2_out))  # (B, T//8, d_model)
 
         out = self.out_norm(x3 + direct)  # (B, T//8, d_model)
         return out, next_s0, next_s1, next_s2
