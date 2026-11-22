@@ -34,8 +34,9 @@ function setNote(text) {
 
 // ---------- rendering ----------
 
-function refine(raw, final) {
-  return st.shuddha ? applyClientShuddha(raw, final) : raw;
+function refine(raw, final, lang = "ne") {
+  // Shuddha's lexicon and postposition rules are Nepali-only; Sanskrit passes through untouched.
+  return st.shuddha && lang !== "sa" ? applyClientShuddha(raw, final) : raw;
 }
 
 function renderStats() {
@@ -74,9 +75,9 @@ function renderClip() {
   const t = $("studio-audio").currentTime;
   const words = it.words || [];
   const visible = playing ? words.filter((w) => w.t0 <= t) : words;
-  const rawVisible = playing || !it.done ? cleanSubwordStutter(visible.map((w) => w.word).join(" ")) : it.raw;
+  const rawVisible = playing || !it.done ? cleanSubwordStutter(visible.map((w) => w.word).join(" "), it.lang) : it.raw;
   const final = !playing && it.done;
-  const refined = refine(rawVisible, final);
+  const refined = refine(rawVisible, final, it.lang);
   $("out-text").innerHTML = rawVisible ? (st.shuddha ? diffHtml(rawVisible, refined) : esc(rawVisible)) : `<span class="placeholder">${it.busy ? "Transcribing..." : ""}</span>`;
   $("raw-text").textContent = rawVisible;
   $("ref-block").hidden = !it.reference;
@@ -141,7 +142,7 @@ async function transcribeItem(item) {
     const engine = await ensureModel(st.model);
     if (run !== st.runId) return;
     setStatus("Transcribing", "busy");
-    const stream = engine.createStream(st.model, { lang: "ne", chunkFrames: 16 });
+    const stream = engine.createStream(st.model, { lang: item.lang || "ne", chunkFrames: 16 });
     const step = 16000;
     for (let i = 0; i < item.pcm.length; i += step) {
       await stream.feed(item.pcm.subarray(i, Math.min(item.pcm.length, i + step)));
@@ -157,7 +158,7 @@ async function transcribeItem(item) {
     item.words = res.words; item.raw = res.raw; item.done = true; item.busy = false;
     st.stats = { chunkMs: stream.lastChunkMs, rtf: res.rtf, audioSec: res.audioSec };
     if (item.reference) {
-      item.score = { raw: scoreAgainst(item.reference, res.raw), shuddha: scoreAgainst(item.reference, applyClientShuddha(res.raw, true)) };
+      item.score = { raw: scoreAgainst(item.reference, res.raw), shuddha: scoreAgainst(item.reference, item.lang === "sa" ? res.raw : applyClientShuddha(res.raw, true)) };
     }
     setStatus("Ready", "ok");
     render();
@@ -200,7 +201,7 @@ async function loadSample(sample, play = true) {
   const audio = attachAudio(sample.audio_url);
   audio.currentTime = 0;
   if (play) audio.play().catch(() => {});
-  const item = { title: sample.title, reference: sample.reference, pcm: null, words: [], busy: true, done: false, progress: 0 };
+  const item = { title: sample.title, lang: sample.lang || "ne", reference: sample.reference, pcm: null, words: [], busy: true, done: false, progress: 0 };
   st.item = item;
   render();
   try {
@@ -217,7 +218,7 @@ async function loadFile(file) {
   document.querySelectorAll(".sample-item").forEach((el) => el.classList.remove("active"));
   const audio = attachAudio(URL.createObjectURL(file));
   audio.currentTime = 0;
-  const item = { title: file.name, reference: "", pcm: null, words: [], busy: true, done: false, progress: 0 };
+  const item = { title: file.name, lang: "ne", reference: "", pcm: null, words: [], busy: true, done: false, progress: 0 };
   st.item = item;
   setStatus("Decoding audio", "busy");
   render();
@@ -320,10 +321,14 @@ export async function initStudio() {
   renderModelSelector();
   renderStats();
   setStatus("Idle", "idle");
-  try {
-    const m = await (await fetch(new URL("samples/manifest.json", document.baseURI), { cache: "no-cache" })).json();
-    st.samples = m.samples || [];
-  } catch (_) { st.samples = []; }
+  const grab = async (path) => {
+    try { return (await (await fetch(new URL(path, document.baseURI), { cache: "no-cache" })).json()).samples || []; } catch (_) { return []; }
+  };
+  const [curated, extra] = await Promise.all([grab("metrics.json"), grab("samples/manifest.json")]);
+  const seen = new Set();
+  st.samples = [...curated, ...extra]
+    .filter((x) => x.audio_url && !seen.has(x.audio_url) && seen.add(x.audio_url))
+    .map(({ id, title, lang, domain, audio_url, duration_s, reference }) => ({ id, title, lang: lang || "ne", domain, audio_url, duration_s, reference }));
   renderSamples();
   requestAnimationFrame(tick);
   // Warm the runtime and the default model in the background so the first click is fast.
