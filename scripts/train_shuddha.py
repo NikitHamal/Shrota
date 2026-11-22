@@ -121,13 +121,15 @@ def build_shuddha_training_pairs(
             tx = r["text"]
             if len(tx) >= 8:
                 clean_sentences.append(tx)
-                if len(acoustic_slice) < 8000 and r["mel"].size(0) <= 640:
+                if len(acoustic_slice) < 40000 and r["mel"].size(0) <= 640:
                     acoustic_slice.append(r)
-        if len(clean_sentences) >= max_sentences:
+        if len(clean_sentences) >= max_sentences and len(acoustic_slice) >= 40000:
             break
 
     real_asr_pairs = []
-    base_ckpt = CKPT_DIR / "shrota_base_best.pt"
+    base_ckpt = CKPT_DIR / "shrota_base_v2_best.pt"
+    if not base_ckpt.exists():
+        base_ckpt = CKPT_DIR / "shrota_base_best.pt"
     if base_ckpt.exists() and acoustic_slice:
         try:
             from collections import Counter, defaultdict
@@ -140,18 +142,19 @@ def build_shuddha_training_pairs(
 
             asr_base = ShrotaASRModel.build_base(vocab_size=tokenizer.vocab_size).to(device).eval()
             asr_base.load_state_dict(torch.load(base_ckpt, map_location=device, weights_only=True))
+            sub = getattr(asr_base, "subsampling_factor", 4)
             with torch.no_grad(), torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                for b_start in range(0, min(8000, len(acoustic_slice)), 256):
+                for b_start in range(0, min(40000, len(acoustic_slice)), 256):
                     chunk = acoustic_slice[b_start : b_start + 256]
                     max_t = max(x["mel"].size(0) for x in chunk)
-                    max_t += (8 - max_t % 8) % 8
+                    max_t += (sub - max_t % sub) % sub
                     m_pad = torch.zeros(len(chunk), max_t, 80, device=device)
                     for idx_c, x in enumerate(chunk):
                         m_pad[idx_c, : x["mel"].size(0)] = x["mel"].float()
                     enc = asr_base.encoder(m_pad)
                     lgs = asr_base.ctc_head(enc).argmax(dim=-1).cpu()
                     for idx_c, x in enumerate(chunk):
-                        el = x["mel"].size(0) // 8
+                        el = x["mel"].size(0) // sub
                         pids = lgs[idx_c, :el].tolist()
                         dedup = []
                         prev = 0
@@ -304,8 +307,15 @@ def main():
     pairs = build_shuddha_training_pairs(tok, manifest["shard_paths"])
 
     model = ShrotaShuddhaModel(vocab_size=tok.vocab_size, d_model=192, n_layers=4, n_heads=4, d_ff=512).to(device)
+    shuddha_ckpt = CKPT_DIR / "shrota_shuddha_best.pt"
+    if shuddha_ckpt.exists():
+        try:
+            model.load_state_dict(torch.load(shuddha_ckpt, map_location=device, weights_only=True))
+            print(f"[Shrota-Shuddha v2] Warm-started from {shuddha_ckpt} for v2 acoustic error re-polishing.", flush=True)
+        except Exception:
+            pass
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"[Shrota-Shuddha] Initialized 100% FROM SCRATCH: {n_params/1e6:.2f}M params", flush=True)
+    print(f"[Shrota-Shuddha] Initialized: {n_params/1e6:.2f}M params", flush=True)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-2)
     step = 0

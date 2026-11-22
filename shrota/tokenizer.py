@@ -195,7 +195,10 @@ class ShrotaTokenizer:
                     ids.append(matched)
                 else:
                     ch = pw[pos]
-                    ids.append(self.token_to_id.get(ch, self.unk_id))
+                    tid = self.token_to_id.get(ch)
+                    if tid is None and ch.lower() in self.token_to_id:
+                        tid = self.token_to_id[ch.lower()]
+                    ids.append(tid if tid is not None else self.unk_id)
                     pos += 1
 
         if add_bos_eos:

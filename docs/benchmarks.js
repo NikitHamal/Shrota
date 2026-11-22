@@ -1,4 +1,4 @@
-// Benchmarks tab + Integrate tab data rendering.
+// Benchmarks tab + Integrate tab data rendering (Shrota v2).
 const $ = (id) => document.getElementById(id);
 
 const DOMAINS = [
@@ -8,7 +8,7 @@ const DOMAINS = [
   ["eval_vedic_gold", "Vedic"],
 ];
 const ORDER = ["shrota_base_shuddha", "shrota_base", "shrota_tiny_shuddha", "shrota_tiny", "whisper_small", "mms_1b_npi"];
-const REPO = "https://github.com/NikitHamal/Shrota/releases/download/v1-ckpt";
+const REPO = "https://github.com/NikitHamal/Shrota/releases/download/v2-ckpt";
 
 const sizeLabel = (mb) => (mb >= 100 ? `${Math.round(mb)} MB` : `${Number(mb).toFixed(1)} MB`);
 
@@ -49,24 +49,20 @@ export function renderShuddha(metrics) {
   $("shuddha-chip").textContent = `${ab.clause_latency_ms} ms per clause · ${ab.size_int8_mb} MB`;
   const row = (label, r, cls = "") =>
     `<tr class="${cls}"><td>${label}</td><td class="num">${r.wer}%</td><td class="num">${r.cer}%</td><td class="num">${r.hraswa_dirgha_acc}%</td><td class="num">${r.punct_f1}%</td></tr>`;
-  body.innerHTML = row("Corrupted FLEURS text", ab.before_shuddha) + row("After Shuddha", ab.after_shuddha, "ours");
+  body.innerHTML = row("Before Shuddha (raw errors)", ab.before_shuddha) + row("After Shuddha v2", ab.after_shuddha, "ours");
 }
 
 export function renderDownloads(metrics) {
-  const models = metrics?.models || {};
-  const sizeOf = (...ks) => {
-    for (const k of ks) if (models[k]) return models[k].size_mb;
-    return null;
-  };
   const shud = metrics?.shuddha || metrics?.shuddha_ablation;
   const files = [
-    ["shrota_shuddha_int8.onnx", shud?.size_int8_mb, "models/shrota_shuddha_int8.onnx"],
-    ["tokenizer.json", null, "models/tokenizer.json"],
-    ["shrota_base_encoder_int8.onnx", 13.0, "models/shrota_base_encoder_int8.onnx"],
+    ["shrota_base_encoder_int8.onnx", 13.1, "models/shrota_base_encoder_int8.onnx"],
     ["shrota_base_decoder_int8.onnx", 0.7, "models/shrota_base_decoder_int8.onnx"],
     ["shrota_tiny_encoder_int8.onnx", 3.2, "models/shrota_tiny_encoder_int8.onnx"],
     ["shrota_tiny_decoder_int8.onnx", 0.3, "models/shrota_tiny_decoder_int8.onnx"],
-    ["shrota_*_best.pt (PyTorch checkpoints)", null, REPO.replace("/download/v1-ckpt", "")],
+    ["shrota_shuddha_int8.onnx", shud?.size_int8_mb ?? 1.8, "models/shrota_shuddha_int8.onnx"],
+    ["nepali_4gram_lm.json (4-gram subword + word LM)", 2.1, "models/nepali_4gram_lm.json"],
+    ["tokenizer.json", null, "models/tokenizer.json"],
+    ["shrota_*_v2_best.pt (PyTorch v2 checkpoints)", null, REPO.replace("/download/v2-ckpt", "")],
   ];
   $("download-list").innerHTML = files
     .map(([n, mb, href]) => `<a class="download-item" href="${href}" ${href.startsWith("http") ? 'target="_blank" rel="noopener"' : "download"}><span class="download-name mono">${n}</span>${mb ? `<span class="m3-chip">${mb} MB</span>` : ""}</a>`)

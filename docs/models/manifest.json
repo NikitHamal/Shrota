@@ -1,9 +1,10 @@
 {
   "tokenizer": "models/tokenizer.json",
   "cmvn": "models/cmvn.json",
+  "lm": "models/nepali_4gram_lm.json",
   "models": {
     "base": {
-      "label": "Shrota-Base",
+      "label": "Shrota-Base v2",
       "encoder": "models/shrota_base_encoder_int8.onnx",
       "decoder": "models/shrota_base_decoder_int8.onnx",
       "d_model": 256,
@@ -12,10 +13,11 @@
       "head_dim": 64,
       "left_ctx": 64,
       "conv_cache": 8,
-      "size_mb": 13.6
+      "subsampling": 4,
+      "size_mb": 13.8
     },
     "tiny": {
-      "label": "Shrota-Tiny",
+      "label": "Shrota-Tiny v2",
       "encoder": "models/shrota_tiny_encoder_int8.onnx",
       "decoder": "models/shrota_tiny_decoder_int8.onnx",
       "d_model": 128,
@@ -24,6 +26,7 @@
       "head_dim": 32,
       "left_ctx": 64,
       "conv_cache": 8,
+      "subsampling": 4,
       "size_mb": 3.5
     }
   }

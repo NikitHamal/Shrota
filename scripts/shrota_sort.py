@@ -50,15 +50,25 @@ def score_and_align_clip(
     if dur < 0.5:
         return {"path": wav_path, "dur": dur, "tier": "reject", "reason": "too_short", "confidence": 0.0}
 
+    sub = getattr(asr_model, "subsampling_factor", 4)
+    frame_sec = sub * 0.01
     with torch.no_grad():
-        mel = mel_ext(wav.to(device)).unsqueeze(0)
-        rem = mel.size(1) % 8
-        if rem != 0:
-            mel = F.pad(mel, (0, 0, 0, 8 - rem))
-        enc_out = asr_model.encoder(mel)
-        logits = asr_model.ctc_head(enc_out)[0]
-        probs = F.softmax(logits, dim=-1)
-        top_probs, top_ids = probs.max(dim=-1)
+        best_score = -1.0
+        top_probs, top_ids, best_logits = None, None, None
+        for gain in (1.0,):
+            mel = mel_ext((wav * gain).to(device)).unsqueeze(0)
+            rem = mel.size(1) % sub
+            if rem != 0:
+                mel = F.pad(mel, (0, 0, 0, sub - rem))
+            enc_out = asr_model.encoder(mel)
+            logits = asr_model.ctc_head(enc_out)[0]
+            probs = F.softmax(logits, dim=-1)
+            tp, ti = probs.max(dim=-1)
+            non_blk = tp[ti != 0]
+            sc = float(non_blk.mean().item()) if non_blk.numel() >= 2 else 0.0
+            if sc > best_score:
+                best_score = sc
+                top_probs, top_ids, best_logits = tp, ti, logits
 
     blank_id = tokenizer.blank_id
     tokens = []
@@ -67,13 +77,17 @@ def score_and_align_clip(
     prev = blank_id
     for t_idx in range(top_ids.size(0)):
         cid = int(top_ids[t_idx].item())
-        if cid != blank_id and cid != prev:
+        if cid != blank_id and cid >= 8 and cid != prev:
             tokens.append(cid)
             confs.append(float(top_probs[t_idx].item()))
-            frame_times.append(round(t_idx * 0.08, 3))
+            frame_times.append(round(t_idx * frame_sec, 3))
         prev = cid
 
-    raw_text = tokenizer.decode(tokens)
+    from shrota.lm_beam import get_default_lm, ctc_prefix_beam_search
+    from shrota.streaming import clean_subword_stutter_and_matras
+    lm = get_default_lm()
+    beam_tokens = ctc_prefix_beam_search(best_logits, lm=lm, blank_id=blank_id, bos_id=tokenizer.bos_id) if lm is not None else tokens
+    raw_text = clean_subword_stutter_and_matras(tokenizer.decode(beam_tokens or tokens))
     shuddha_text = apply_shuddha_refinement(
         raw_text, shuddha_model=shuddha_model, tokenizer=tokenizer, add_punct=True
     )
@@ -113,9 +127,9 @@ def score_and_align_clip(
     deva = round(devanagari_ratio(shuddha_text), 3)
     wps = len(words) / max(dur, 0.1)
 
-    if mean_conf >= 0.85 and deva >= 0.95 and 0.8 <= wps <= 5.5:
+    if mean_conf >= 0.72 and deva >= 0.92 and 0.6 <= wps <= 6.0:
         tier = "gold"
-    elif mean_conf >= 0.68 and deva >= 0.88 and 0.5 <= wps <= 6.5:
+    elif mean_conf >= 0.55 and deva >= 0.85 and 0.4 <= wps <= 7.0:
         tier = "silver"
     else:
         tier = "reject"
@@ -148,8 +162,9 @@ def main():
         mel_ext.set_cmvn(cmvn["mean"], cmvn["std"])
 
     asr = ShrotaASRModel.build_base(vocab_size=tok.vocab_size).to(args.device).eval()
-    if (ckpt_dir / "shrota_base_best.pt").exists():
-        asr.load_state_dict(torch.load(ckpt_dir / "shrota_base_best.pt", map_location=args.device, weights_only=True))
+    base_ckpt = ckpt_dir / "shrota_base_v2_best.pt" if (ckpt_dir / "shrota_base_v2_best.pt").exists() else ckpt_dir / "shrota_base_best.pt"
+    if base_ckpt.exists():
+        asr.load_state_dict(torch.load(base_ckpt, map_location=args.device, weights_only=True))
 
     shuddha = ShrotaShuddhaModel(vocab_size=tok.vocab_size).to(args.device).eval()
     if (ckpt_dir / "shrota_shuddha_best.pt").exists():

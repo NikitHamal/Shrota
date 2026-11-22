@@ -98,10 +98,10 @@ def main():
 
     if args.model == "base":
         asr = ShrotaASRModel.build_base(vocab_size=tok.vocab_size)
-        ckpt_p = ckpt_dir / "shrota_base_best.pt"
+        ckpt_p = ckpt_dir / "shrota_base_v2_best.pt" if (ckpt_dir / "shrota_base_v2_best.pt").exists() else ckpt_dir / "shrota_base_best.pt"
     else:
         asr = ShrotaASRModel.build_tiny(vocab_size=tok.vocab_size)
-        ckpt_p = ckpt_dir / "shrota_tiny_best.pt"
+        ckpt_p = ckpt_dir / "shrota_tiny_v2_best.pt" if (ckpt_dir / "shrota_tiny_v2_best.pt").exists() else ckpt_dir / "shrota_tiny_best.pt"
 
     if ckpt_p.exists():
         asr.load_state_dict(torch.load(ckpt_p, map_location="cpu", weights_only=True))

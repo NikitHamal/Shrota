@@ -1,15 +1,16 @@
-// Shrota streaming ASR runtime for the browser (onnxruntime-web WASM) and Node (same code, same ONNX).
+// Shrota v2 streaming ASR runtime for the browser (onnxruntime-web WASM) and Node (same code, same ONNX).
 // encoder: (mel, caches...) -> (ctc_logits, enc_out, next caches...)
 // decoder: (enc_frame, tok_prev2, tok_prev1) -> (tdt_tok_logits, tdt_dur_logits)
-// Decoding mirrors scripts/train_base.py evaluate_asr_model: CTC greedy with 2-gram TDT rescoring.
+// Decoding mirrors scripts/train_base_v2.py evaluate_asr_model: Hybrid CTC + Stateless 2-gram TDT rescoring
+// + 4-gram Nepali Subword Prefix Beam Search (beam=6) & contextual word-bigram lexicon snapping.
 import { LogMelStream, N_MELS } from "./features.js";
-import { decodeTokens, cleanSubwordStutter, tokensToWords } from "./text.js";
+import { decodeTokens, cleanSubwordStutter, tokensToWords, ctcPrefixBeamSearch } from "./text.js";
 
 const BLANK = 0;
 const BOS = 2;
-const CTC_W = 0.85;
-const TDT_W = 0.15;
-const FRAME_SEC = 0.08;
+const CTC_W = 0.90;
+const TDT_W = 0.10;
+const FRAME_SEC = 0.04; // 4x causal subsampling = 40 ms per encoder frame
 const CACHE_NAMES = ["s0", "s1", "s2", "k", "v", "conv"];
 
 function logSoftmaxInto(src, off, n, dst) {
@@ -37,6 +38,7 @@ export class ShrotaEngine {
     this.sessions = {};
     this.vocab = null;
     this.cmvn = null;
+    this.lm = null;
   }
 
   async loadShared() {
@@ -45,6 +47,13 @@ export class ShrotaEngine {
       this.vocab = tok.vocab;
     }
     if (!this.cmvn) this.cmvn = await this.loadJson(this.manifest.cmvn);
+    if (!this.lm && this.manifest.lm) {
+      try {
+        this.lm = await this.loadJson(this.manifest.lm);
+      } catch (_) {
+        this.lm = null;
+      }
+    }
   }
 
   loadModel(key, onProgress) {
@@ -63,7 +72,7 @@ export class ShrotaEngine {
     if (this.sessions[key]) return this.sessions[key];
     const cfg = this.manifest.models[key];
     if (!cfg) throw new Error(`Unknown model: ${key}`);
-    const opts = { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
+    const opts = typeof window === "undefined" ? { graphOptimizationLevel: "all" } : { executionProviders: ["wasm"], graphOptimizationLevel: "all" };
     onProgress?.("encoder");
     const enc = await this.ort.InferenceSession.create(new Uint8Array(await this.loadBytes(cfg.encoder)), opts);
     onProgress?.("decoder");
@@ -79,7 +88,7 @@ export class ShrotaEngine {
   }
 
   /** Offline transcription helper: runs the full waveform through a stream. */
-  async transcribe(key, pcm, { lang = "ne", chunkFrames = 64, onProgress } = {}) {
+  async transcribe(key, pcm, { lang = "ne", chunkFrames = 16, onProgress } = {}) {
     const stream = this.createStream(key, { lang, chunkFrames });
     const step = 16000 * 2;
     for (let i = 0; i < pcm.length; i += step) {
@@ -96,12 +105,15 @@ export class ShrotaStream {
     this.engine = engine;
     this.model = model;
     this.lang = lang;
-    this.chunkFrames = Math.max(8, Math.round(chunkFrames / 8) * 8);
+    this.sub = model.cfg.subsampling || 4;
+    this.frameSec = this.sub * 0.01;
+    this.chunkFrames = Math.max(this.sub, Math.round(chunkFrames / this.sub) * this.sub);
     this.mel = new LogMelStream(engine.cmvn);
     this.pending = new Float32Array(0);
     this.caches = this.#initCaches();
     this.tokens = [];
     this.confs = [];
+    this.refinedLpFrames = [];
     this.prevCtc = BLANK;
     this.prev2 = BOS;
     this.prev1 = BOS;
@@ -135,9 +147,23 @@ export class ShrotaStream {
     return this.#consumeMel(rows, false);
   }
 
-  /** Flush the tail (zero-pads mel to a multiple of 8 frames like the offline evaluator). */
+  /** Flush the tail (zero-pads mel to a multiple of subsampling factor like the offline evaluator). */
   async flush() {
-    return this.#consumeMel(new Float32Array(0), true);
+    const emitted = await this.#consumeMel(new Float32Array(0), true);
+    if (this.refinedLpFrames.length > 0 && this.engine.lm) {
+      const beamTokens = ctcPrefixBeamSearch(this.refinedLpFrames, this.engine.lm, {
+        blankId: BLANK,
+        bosId: BOS,
+        beamSize: 6,
+        topK: 6,
+        alpha: 0.25,
+        beta: 0.08,
+      });
+      if (beamTokens.length > 0) {
+        this.tokens = beamTokens;
+      }
+    }
+    return emitted;
   }
 
   async #consumeMel(rows, final) {
@@ -155,7 +181,7 @@ export class ShrotaStream {
     }
     if (final && this.pending.length) {
       const frames = this.pending.length / N_MELS;
-      const padded = Math.ceil(frames / 8) * 8;
+      const padded = Math.ceil(frames / this.sub) * this.sub;
       const buf = new Float32Array(padded * N_MELS);
       buf.set(this.pending, 0);
       this.pending = new Float32Array(0);
@@ -182,8 +208,11 @@ export class ShrotaStream {
     let emitted = 0;
     for (let t = 0; t < T; t++) {
       const off = t * V;
+      logSoftmaxInto(ctc, off, V, this.tokBuf);
+      const frameLp = Float32Array.from(this.tokBuf);
+
       let best = 0, bestV = -Infinity;
-      for (let i = 0; i < V; i++) if (ctc[off + i] > bestV) { bestV = ctc[off + i]; best = i; }
+      for (let i = 0; i < V; i++) if (this.tokBuf[i] > bestV) { bestV = this.tokBuf[i]; best = i; }
       const frameIdx = this.encFrames + t;
       if (best !== BLANK) this.silentFrames = 0; else this.silentFrames++;
       if (best !== BLANK && best !== this.prevCtc) {
@@ -192,12 +221,11 @@ export class ShrotaStream {
           tok_prev2: new ort.Tensor("int64", BigInt64Array.from([BigInt(this.prev2)]), [1]),
           tok_prev1: new ort.Tensor("int64", BigInt64Array.from([BigInt(this.prev1)]), [1]),
         });
-        logSoftmaxInto(ctc, off, V, this.tokBuf);
         logSoftmaxInto(d.tdt_tok_logits.data, 0, V, this.tdtBuf);
-        let id = 0, score = -Infinity;
-        for (let i = 0; i < V; i++) {
-          if (i === BLANK) continue;
+        let id = 8, score = -Infinity;
+        for (let i = 8; i < V; i++) {
           const s = CTC_W * this.tokBuf[i] + TDT_W * this.tdtBuf[i];
+          frameLp[i] = s;
           if (s > score) { score = s; id = i; }
         }
         this.tokens.push({ id, frame: frameIdx });
@@ -206,6 +234,7 @@ export class ShrotaStream {
         this.prev1 = id;
         emitted++;
       }
+      this.refinedLpFrames.push(frameLp);
       this.prevCtc = best;
     }
     this.encFrames += T;
@@ -215,23 +244,35 @@ export class ShrotaStream {
   }
 
   rawText() {
-    return cleanSubwordStutter(decodeTokens(this.tokens.map((t) => t.id), this.engine.vocab), this.lang);
+    return cleanSubwordStutter(decodeTokens(this.tokens.map((t) => t.id), this.engine.vocab), this.lang, this.engine.lm);
   }
 
   words() {
-    return tokensToWords(this.tokens, this.engine.vocab, FRAME_SEC);
+    return tokensToWords(this.tokens, this.engine.vocab, this.frameSec || FRAME_SEC);
   }
 
   /** Seconds of trailing blank frames since the last emitted token. */
   silenceSec() {
-    return this.silentFrames * FRAME_SEC;
+    return this.silentFrames * (this.frameSec || FRAME_SEC);
   }
 
   /** Drop the emitted tokens (clause commit) while keeping encoder caches and decoder context. */
   takeSegment() {
+    if (this.refinedLpFrames.length > 0 && this.engine.lm) {
+      const beamTokens = ctcPrefixBeamSearch(this.refinedLpFrames, this.engine.lm, {
+        blankId: BLANK,
+        bosId: BOS,
+        beamSize: 6,
+        topK: 6,
+        alpha: 0.25,
+        beta: 0.08,
+      });
+      if (beamTokens.length > 0) this.tokens = beamTokens;
+    }
     const seg = { raw: this.rawText(), words: this.words(), tokens: this.tokens, confs: this.confs };
     this.tokens = [];
     this.confs = [];
+    this.refinedLpFrames = [];
     this.prev2 = BOS;
     this.prev1 = BOS;
     return seg;

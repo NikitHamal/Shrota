@@ -183,42 +183,84 @@ def resolve_homophone_word(w: str, harvested: dict[str, str], vocab_freq: dict[s
     return best_cand
 
 
-def clean_subword_stutter_and_matras(s: str, lang: str = "ne") -> str:
-    """Resolve Devanagari subword CTC boundary matra overlaps and 1-akshara onset stutters."""
+_KEEP_SHORT_WORDS = {
+    "र", "न", "छ", "हो", "की", "कि", "यो", "ती", "सो", "के", "को", "मा", "ले", "वा", "ऊ", "यी", "त", "नि", "पो", "ल", "खै", "नै", "तै", "उ", "म",
+}
+_REDUPLICATIVE_WORDS = {
+    "तथा", "सानो", "ठूलो", "धेरै", "थोरै", "आफ्नो", "घर", "गाउँ", "ठाउँ", "दिन", "रात", "एक", "दुई", "तीन", "चार", "पाँच", "सय", "हजार", "लाख", "करोड", "अलग", "फरक", "राम्रो", "नयाँ", "छिटो", "ढिलो", "बिस्तारै", "साथ", "पछि", "अघि", "माथि", "तल", "भित्र", "बाहिर", "वरिपरि", "कहिले", "कहाँ", "के", "को", "कुन", "कसरी", "किन",
+}
+_PLURAL_VERB_HALANT_RE = re.compile(
+    r"(?:^|(?<=\s))(छन|हुन|गर्छन|गर्दछन|सक्छन|सक्दछन|हुन्छन|थिएनन|छैनन|पार्छन|हिँड्छन|जान्छन|आउँछन|भन्छन|दिन्छन|लिन्छन|मान्छन|देखिन्छन|पाइन्छन|गरिन्छन|भनिन्छन|बस्छन|राख्छन|खान्छन|पढ्छन|लेख्छन)(?=\s|[।,?!]|$)"
+)
+
+
+def clean_subword_stutter_and_matras(s: str, lang: str = "ne", use_lm_lexicon: bool = True) -> str:
+    """Resolve Devanagari subword CTC boundary matra overlaps, prefix stutters, and lexicon snapping."""
     if not s:
         return ""
     # 1. Attach any space-separated dependent vowel sign / matra / halant to preceding word
     s = re.sub(r"\s+([\u0901-\u0903\u093E-\u094D])", r"\1", s)
     # 2. Strip any word-initial bare dependent matra / halant
     s = re.sub(r"(?:^|(?<=\s))[\u0901-\u0903\u093E-\u094D]+", "", s)
-    # 3. Collapse consecutive duplicate/conflicting dependent vowel signs (e.g. ाा -> ा)
+    # 3. Collapse consecutive duplicate/conflicting dependent vowel signs (e.g. ाा -> ा) & double halants
     s = re.sub(r"([\u093E-\u094C])[\u093E-\u094C]+", r"\1", s)
     s = re.sub(r"\u094D\u094D+", "\u094D", s)
-    # 4. Fix leading digit before consonant-halant cluster (e.g. 1्यपि -> यद्यपि)
-    s = re.sub(r"(?:^|(?<=\s))[0-9\u0966-\u096F](?=[\u0915-\u0939]\u094D)", "यद", s)
-    # 5. Strip stray word-final halant in Nepali (Sanskrit preserves final म्/त्)
+    # 3b. Strip any stray ASCII letter attached to a Devanagari character (e.g. किpडियोडि -> किडियोडि)
+    s = re.sub(r"(?<=[\u0900-\u097F])[a-zA-Z]+|[a-zA-Z]+(?=[\u0900-\u097F])", "", s)
+    # 4. Collapse triple repha or duplicate consonant before halant (preserving valid र्र in अन्तर्राष्ट्रिय!)
+    s = re.sub(r"\u0930\u094D\u0930\u094D\u0930", "\u0930\u094d\u0930", s)
+    s = re.sub(r"([\u0915-\u092F\u0931-\u0939])\1\u094D", r"\1" + "\u094d", s)
+    # 5. Strip stray 1-akshara noise prefix before leading zero (e.g. जे० -> ०, जेरो -> ०) and separate multi-char words from digits (मार्च११ -> मार्च ११)
+    s = re.sub(r"(?:^|(?<=\s))(?:जेरो|जिरो|जे)\s*(?=०)", "०", s)
+    s = re.sub(r"([\u0904-\u0939][\u0900-\u0963]+)([\u0966-\u096F])", r"\1 \2", s)
+    s = re.sub(r"(?:^|(?<=\s))[\u0915-\u0939][\u093E-\u094C]?(?=[\u0966-\u096F])", "", s)
+    s = re.sub(r"(?:^|(?<=\s))(०)\s+(?=[\u0966-\u096F])", r"\1", s)
+    s = re.sub(r"([\u0966-\u096F])\1\1+", r"\1\1", s)
+    # 6. Strip stray word-final halant in Nepali EXCEPT after म, द, त, स, न; restore plural verb halants
     if lang == "ne":
-        s = re.sub(r"(?<![मदतस])\u094D(?=\s|[।,?!]|$)", "", s)
-    # 6. Collapse CTC subword onset stutter: 1-akshara word followed by word starting with same consonant
+        s = re.sub(r"(?<![मदतसन])\u094D(?=\s|[।,?!]|$)", "", s)
+        s = _PLURAL_VERB_HALANT_RE.sub(r"\1्", s)
+
+    # 7. Collapse 1-to-2 char subword prefix stutters (सा सालमा -> सालमा, वि विचार -> विचार, स २७ -> २७)
     words = s.split()
     out_w: list[str] = []
-    i = 0
-    while i < len(words):
-        w = words[i]
-        w_clean = w.rstrip("।,?!")
-        if i + 1 < len(words):
-            nxt = words[i + 1]
-            if (
-                1 <= len(w_clean) <= 2
-                and len(nxt) >= 2
-                and w_clean[0] == nxt[0]
-                and w_clean not in ("र", "न", "छ", "हो", "की", "कि", "यो", "ती", "सो", "के", "को")
-            ):
-                i += 1
+    n_w = len(words)
+    for i, w in enumerate(words):
+        wc = w.rstrip("।,?!-")
+        if not wc:
+            continue
+        if i + 1 < n_w:
+            nxt = words[i + 1].rstrip("।,?!-")
+            # Stray 1-char consonant before a number (e.g. स २७ -> २७, प ४५ -> ४५)
+            if len(wc) == 1 and wc not in ("र", "न", "छ") and nxt and "\u0966" <= nxt[0] <= "\u096F":
                 continue
+            # Short prefix stutter before a word starting with the same initial akshara (e.g. सा सालमा, वि विचार, आ आफ्नो)
+            if (
+                1 <= len(wc) <= 2
+                and len(nxt) >= len(wc) + 2
+                and wc not in _KEEP_SHORT_WORDS
+                and (nxt.startswith(wc) or (wc[0] == nxt[0] and len(wc) <= 2))
+            ):
+                continue
+            # Exact duplicate consecutive word stutter (e.g. बजे बजे -> बजे)
+            if wc == nxt and wc not in _REDUPLICATIVE_WORDS and len(wc) >= 2:
+                continue
+        if out_w and len(wc) == 1 and wc == out_w[-1].rstrip("।,?!-") and wc not in ("र", "न", "छ"):
+            continue
         out_w.append(w)
-        i += 1
-    return " ".join(out_w)
+
+    cleaned = " ".join(out_w)
+    if use_lm_lexicon:
+        try:
+            from shrota.lm_beam import get_default_lm
+            lm = get_default_lm()
+            if lm is not None:
+                cleaned = lm.refine_words(cleaned, lang=lang)
+                if lang == "ne":
+                    cleaned = _PLURAL_VERB_HALANT_RE.sub(r"\1्", cleaned)
+        except Exception:
+            pass
+    return cleaned
 
 
 def apply_shuddha_refinement(
@@ -259,7 +301,8 @@ def apply_shuddha_refinement(
                         safe_ids.append(new_id)
                     else:
                         safe_ids.append(orig_id)
-            s = clean_subword_stutter_and_matras(tokenizer.decode(safe_ids), lang=lang)
+            if safe_ids != ids:
+                s = clean_subword_stutter_and_matras(tokenizer.decode(safe_ids), lang=lang, use_lm_lexicon=False)
 
     # 2. Hraswa-dirgha lexicon cleanup and guarded postposition attachment
     harvested, vocab_freq = get_harvested_lexicon()
@@ -278,7 +321,8 @@ def apply_shuddha_refinement(
             and merged
             and clean_w in POSTPOSITIONS
             and not merged[-1].endswith(("।", ",", "?", "!", "हरू"))
-            and not any(ch.isdigit() for ch in merged[-1])
+            and not any(ch.isdigit() or "\u0966" <= ch <= "\u096f" for ch in merged[-1])
+            and (clean_w == "हरू" or vocab_freq.get(merged[-1] + clean_w, 0) >= max(5, vocab_freq.get(merged[-1], 0) * 2))
         ):
             merged[-1] = merged[-1] + clean_w + trail_p
         else:
@@ -327,6 +371,7 @@ class ShrotaStreamingPipeline:
         self.prev_ctc_id = self.tokenizer.blank_id
         self.token_ids: list[int] = []
         self.frame_confidences: list[float] = []
+        self.refined_lp_frames: list[torch.Tensor] = []
         self.prev2_tok = self.tokenizer.bos_id
         self.prev1_tok = self.tokenizer.bos_id
 
@@ -340,10 +385,10 @@ class ShrotaStreamingPipeline:
         if wav.dim() == 1:
             wav = wav.unsqueeze(0)
 
-        # Pad chunk to multiple of 8 * HOP_LENGTH (1,280 samples = 80 ms)
-        rem_samples = wav.size(1) % (8 * HOP_LENGTH)
+        sub = getattr(self.asr_model, "subsampling_factor", 4)
+        rem_samples = wav.size(1) % (sub * HOP_LENGTH)
         if rem_samples != 0:
-            wav = F.pad(wav, (0, (8 * HOP_LENGTH) - rem_samples))
+            wav = F.pad(wav, (0, (sub * HOP_LENGTH) - rem_samples))
 
         # Exact causal STFT continuity using 240-sample history buffer
         wav_with_hist = torch.cat([self.wav_history, wav], dim=1)
@@ -360,43 +405,66 @@ class ShrotaStreamingPipeline:
         self.caches = out[1:]
 
         ctc_logits = self.asr_model.ctc_head(enc_out)[0]  # (T_sub, V)
-        probs = F.softmax(ctc_logits, dim=-1)
+        ctc_lp = F.log_softmax(ctc_logits.float(), dim=-1)
+        probs = ctc_lp.exp()
+        refined_chunk = ctc_lp.clone()
 
-        # Hybrid CTC + Stateless 2-gram TDT decoding step per 80 ms subsampled frame
+        # Hybrid CTC + Stateless 2-gram TDT decoding step per 40 ms subsampled frame
         for t in range(enc_out.size(1)):
             top_p, top_id = probs[t].max(dim=-1)
             cid = int(top_id.item())
             if cid != self.tokenizer.blank_id and cid != self.prev_ctc_id:
-                # Contextual rescoring with Stateless 2-gram TDT joint head
                 pred_state = self.asr_model.predictor.forward_step(
                     torch.tensor([self.prev2_tok], device=self.device),
                     torch.tensor([self.prev1_tok], device=self.device),
                 )
                 tdt_logits, _ = self.asr_model.joint.forward_step(enc_out[:, t, :], pred_state)
-                combined = 0.75 * F.log_softmax(ctc_logits[t : t + 1], dim=-1) + 0.25 * F.log_softmax(tdt_logits, dim=-1)
-                best_id = int(combined[0].argmax(dim=-1).item())
-                if best_id != self.tokenizer.blank_id:
-                    self.token_ids.append(best_id)
-                    self.frame_confidences.append(float(top_p.item()))
-                    self.prev2_tok = self.prev1_tok
-                    self.prev1_tok = best_id
+                tdt_lp = F.log_softmax(tdt_logits.float(), dim=-1)[0]
+                refined_chunk[t, 8:] = 0.90 * ctc_lp[t, 8:] + 0.10 * tdt_lp[8:]
+                best_id = int(refined_chunk[t, 8:].argmax(dim=-1).item()) + 8
+                self.token_ids.append(best_id)
+                self.frame_confidences.append(float(top_p.item()))
+                self.prev2_tok = self.prev1_tok
+                self.prev1_tok = best_id
             self.prev_ctc_id = cid
 
-        raw_partial = self.tokenizer.decode(self.token_ids)
+        self.refined_lp_frames.append(refined_chunk.detach().cpu())
+        raw_partial = clean_subword_stutter_and_matras(self.tokenizer.decode(self.token_ids))
         return {
             "partial": raw_partial,
             "num_tokens": len(self.token_ids),
             "confidence": float(np.mean(self.frame_confidences)) if self.frame_confidences else 0.0,
         }
 
-    def finalize_clause(self, add_punct: bool = True) -> dict:
-        """Finalize current clause and apply Shrota-Shuddha grammatical refinement."""
-        raw_text = self.tokenizer.decode(self.token_ids)
+    def finalize_clause(self, add_punct: bool = True, lang: str = "ne") -> dict:
+        """Finalize current clause with 4-gram Prefix Beam Search and Shrota-Shuddha refinement."""
+        final_ids = self.token_ids
+        if self.refined_lp_frames:
+            try:
+                from shrota.lm_beam import get_default_lm, ctc_prefix_beam_search
+                lm = get_default_lm()
+                full_lp = torch.cat(self.refined_lp_frames, dim=0)
+                beam_ids = ctc_prefix_beam_search(
+                    full_lp,
+                    lm=lm,
+                    blank_id=self.tokenizer.blank_id,
+                    bos_id=self.tokenizer.bos_id,
+                    beam_size=6,
+                    top_k=6,
+                    alpha=0.25,
+                    beta=0.08,
+                )
+                if beam_ids:
+                    final_ids = beam_ids
+            except Exception:
+                pass
+        raw_text = clean_subword_stutter_and_matras(self.tokenizer.decode(final_ids), lang=lang)
         shuddha_text = apply_shuddha_refinement(
             raw_text,
             shuddha_model=self.shuddha_model,
             tokenizer=self.tokenizer,
             add_punct=add_punct,
+            lang=lang,
         )
         return {
             "raw_text": raw_text,

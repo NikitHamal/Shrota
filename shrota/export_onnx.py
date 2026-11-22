@@ -16,6 +16,7 @@ Guarantees:
         outputs: (token_logits, punct_logits)
 """
 from __future__ import annotations
+import hashlib
 import os
 import onnx
 import torch
@@ -84,6 +85,28 @@ def verify_zero_conv_integer(onnx_path: str) -> dict:
 
 def quantize_matmul_int8(fp32_path: str, int8_path: str) -> dict:
     """Quantize MatMul/Gemm/Gather weights to INT8 while keeping Conv in native FP32 (zero ConvInteger!)."""
+    # 1. Fold Identity nodes on shared initializers in the FP32 graph so quantize_dynamic quantizes all shared MatMuls
+    fp32_model = onnx.load(fp32_path)
+    graph_outputs = {o.name for o in fp32_model.graph.output}
+    id_remap: dict[str, str] = {}
+    kept_fp32_nodes = []
+    for node in fp32_model.graph.node:
+        if node.op_type == "Identity" and len(node.input) == 1 and len(node.output) == 1 and node.output[0] not in graph_outputs:
+            src = node.input[0]
+            while src in id_remap:
+                src = id_remap[src]
+            id_remap[node.output[0]] = src
+        else:
+            kept_fp32_nodes.append(node)
+    if id_remap:
+        for node in kept_fp32_nodes:
+            for idx, inp in enumerate(node.input):
+                if inp in id_remap:
+                    node.input[idx] = id_remap[inp]
+        del fp32_model.graph.node[:]
+        fp32_model.graph.node.extend(kept_fp32_nodes)
+        onnx.save(fp32_model, fp32_path)
+
     quantize_dynamic(
         model_input=fp32_path,
         model_output=int8_path,
@@ -91,6 +114,29 @@ def quantize_matmul_int8(fp32_path: str, int8_path: str) -> dict:
         weight_type=QuantType.QUInt8,
         per_channel=False,
     )
+    # 2. Deduplicate shared quantized weight initializers (e.g. shared SC-InterCTC ctc_head & inter_cond_proj)
+    # and prune any unreferenced initializers.
+    model = onnx.load(int8_path)
+    seen_hashes: dict[tuple, str] = {}
+    remap: dict[str, str] = {}
+    for init in model.graph.initializer:
+        if len(init.raw_data) >= 256:
+            key = (init.data_type, tuple(init.dims), hashlib.sha1(init.raw_data).digest())
+            if key in seen_hashes:
+                remap[init.name] = seen_hashes[key]
+            else:
+                seen_hashes[key] = init.name
+    if remap:
+        for node in model.graph.node:
+            for idx, inp in enumerate(node.input):
+                if inp in remap:
+                    node.input[idx] = remap[inp]
+
+    used_inputs = {inp for node in model.graph.node for inp in node.input}
+    kept_inits = [init for init in model.graph.initializer if init.name in used_inputs and init.name not in remap]
+    del model.graph.initializer[:]
+    model.graph.initializer.extend(kept_inits)
+    onnx.save(model, int8_path)
     return verify_zero_conv_integer(int8_path)
 
 

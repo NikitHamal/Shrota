@@ -1,8 +1,9 @@
-"""Cache-Aware Streaming FastConformer with 8x Causal Depthwise Subsampling.
+"""Cache-Aware Streaming FastConformer v2 with 4x Causal Subsampling & Self-Conditioned InterCTC.
 
 Designed for 100% ONNX Runtime Mobile / XNNPACK / NNAPI / WASM compatibility
-(Conv, MatMul, LayerNormalization, SiLU, Sigmoid, Mul, Concat, Slice) and exact
-equivalence between chunked streaming (160 ms / 320 ms) and full-sequence execution.
+(Conv, MatMul, LayerNormalization, SiLU, Sigmoid, Softmax, Mul, Concat, Slice) and exact
+equivalence between chunked streaming (160 ms = 16 mel frames -> 4 encoder frames) and
+full-sequence offline execution.
 """
 from __future__ import annotations
 import math
@@ -11,35 +12,39 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class CausalSubsampling8x(nn.Module):
-    """3-stage 2x strided causal depthwise-separable Conv1D stem (10 ms -> 80 ms frames).
+class CausalSubsampling4x(nn.Module):
+    """2-strided + 1-refinement causal depthwise-separable Conv1D stem (10 ms -> 40 ms frames).
 
-    Each stage has kernel_size=3, stride=2 and takes a 1-frame left cache:
-      input (B, C, T) + cache (B, C, 1) -> (B, C, T+1) -> conv(k=3, s=2) -> (B, C_out, T//2)
-      next_cache = input[:, :, -1:]
-    For any T divisible by 8 (e.g. 16 frames = 160 ms -> 2 output frames), chunked
-    execution is 100% mathematically identical to full-sequence execution.
+    Stage 0: k=3, stride=2 with 1-frame left cache_s0 (B, 80, 1) -> (B, d_model, T//2) [20 ms]
+    Stage 1: k=3, stride=2 depthwise-separable with 1-frame left cache_s1 (B, d_model, 1) -> (B, d_model, T//4) [40 ms]
+    Stage 2: k=2, stride=1 causal depthwise-separable refinement with 1-frame left cache_s2 (B, d_model, 1) -> (B, T//4, d_model) [40 ms]
+    Plus a direct 4-frame (40 ms) spectrogram patch linear residual connection.
+
+    For any T divisible by 4 (e.g. 16 frames = 160 ms -> 4 output frames), chunked
+    streaming execution is 100% mathematically identical to full-sequence execution.
     """
 
     def __init__(self, n_mels: int = 80, d_model: int = 256):
         super().__init__()
         self.n_mels = n_mels
         self.d_model = d_model
+        self.subsampling_factor = 4
 
-        # Direct causal 8-frame (80ms) spectrogram patch residual projection
-        self.frame_proj = nn.Linear(n_mels * 8, d_model)
+        # Direct causal 4-frame (40ms) spectrogram patch residual projection
+        self.frame_proj = nn.Linear(n_mels * 4, d_model)
 
         self.conv0 = nn.Conv1d(n_mels, d_model, kernel_size=3, stride=2, padding=0)
         self.norm0 = nn.LayerNorm(d_model)
         self.act0 = nn.SiLU()
 
         self.dw1 = nn.Conv1d(d_model, d_model, kernel_size=3, stride=2, padding=0, groups=d_model)
-        self.pw1 = nn.Conv1d(d_model, d_model, kernel_size=1)
+        self.pw1 = nn.Linear(d_model, d_model)
         self.norm1 = nn.LayerNorm(d_model)
         self.act1 = nn.SiLU()
 
-        self.dw2 = nn.Conv1d(d_model, d_model, kernel_size=3, stride=2, padding=0, groups=d_model)
-        self.pw2 = nn.Conv1d(d_model, d_model, kernel_size=1)
+        # Causal stride-1 refinement stage (preserves 40 ms frame rate & cache_s2 signature)
+        self.dw2 = nn.Conv1d(d_model, d_model, kernel_size=2, stride=1, padding=0, groups=d_model)
+        self.pw2 = nn.Linear(d_model, d_model)
         self.norm2 = nn.LayerNorm(d_model)
         self.act2 = nn.SiLU()
 
@@ -54,16 +59,16 @@ class CausalSubsampling8x(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Args:
-            mel: (B, T, 80) where T is a multiple of 8
+            mel: (B, T, 80) where T is a multiple of 4
             cache_s0: (B, 80, 1)
             cache_s1: (B, d_model, 1)
             cache_s2: (B, d_model, 1)
         Returns:
-            x: (B, T // 8, d_model)
+            x: (B, T // 4, d_model)
             next_s0, next_s1, next_s2
         """
         B, T, _ = mel.shape
-        direct = self.frame_proj(mel.reshape(B, T // 8, self.n_mels * 8))
+        direct = self.frame_proj(mel.reshape(B, T // 4, self.n_mels * 4))
 
         x0 = mel.transpose(1, 2)  # (B, 80, T)
         next_s0 = x0[:, :, -1:]
@@ -73,17 +78,22 @@ class CausalSubsampling8x(nn.Module):
         next_s1 = x1[:, :, -1:]
         x1_pad = torch.cat([cache_s1, x1], dim=2)
         dw1_out = self.dw1(x1_pad).transpose(1, 2)
-        pw1_out = F.linear(dw1_out, self.pw1.weight.squeeze(-1), self.pw1.bias)
-        x2 = self.act1(self.norm1(pw1_out)).transpose(1, 2)  # (B, d_model, T//4)
+        pw1_out = self.pw1(dw1_out)
+        x2_t = self.act1(self.norm1(pw1_out))  # (B, T//4, d_model)
+        x2 = x2_t.transpose(1, 2)  # (B, d_model, T//4)
 
         next_s2 = x2[:, :, -1:]
         x2_pad = torch.cat([cache_s2, x2], dim=2)
         dw2_out = self.dw2(x2_pad).transpose(1, 2)
-        pw2_out = F.linear(dw2_out, self.pw2.weight.squeeze(-1), self.pw2.bias)
-        x3 = self.act2(self.norm2(pw2_out))  # (B, T//8, d_model)
+        pw2_out = self.pw2(dw2_out)
+        x3 = self.act2(self.norm2(pw2_out))  # (B, T//4, d_model)
 
-        out = self.out_norm(x3 + direct)  # (B, T//8, d_model)
+        out = self.out_norm(x3 + x2_t + direct)  # (B, T//4, d_model)
         return out, next_s0, next_s1, next_s2
+
+
+# Alias for backward compatibility
+CausalSubsampling8x = CausalSubsampling4x
 
 
 class FeedForwardModule(nn.Module):
@@ -102,7 +112,7 @@ class FeedForwardModule(nn.Module):
 
 
 class CacheAwareCausalAttention(nn.Module):
-    """Streaming Multi-Head Self-Attention with explicit K/V left-context cache."""
+    """Streaming Multi-Head Self-Attention with explicit K/V left-context cache and learnable relative slopes."""
 
     def __init__(self, d_model: int, n_heads: int = 4, left_ctx: int = 64, dropout: float = 0.1):
         super().__init__()
@@ -120,22 +130,16 @@ class CacheAwareCausalAttention(nn.Module):
         self.out_proj = nn.Linear(d_model, d_model)
         self.drop = nn.Dropout(dropout)
 
+        # Gentle learnable relative distance slopes per head (allows full 2.56s context horizon)
+        init_slopes = [0.004, 0.012, 0.035, 0.090][:n_heads]
+        self.head_slopes = nn.Parameter(torch.tensor(init_slopes, dtype=torch.float32).view(1, n_heads, 1, 1))
+
     def forward(
         self,
         x: torch.Tensor,
         cache_k: torch.Tensor,
         cache_v: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: (B, T, D)
-            cache_k: (B, H, L_ctx, Dh)
-            cache_v: (B, H, L_ctx, Dh)
-        Returns:
-            out: (B, T, D)
-            next_k: (B, H, L_ctx, Dh)
-            next_v: (B, H, L_ctx, Dh)
-        """
         B, T, D = x.shape
         L_ctx = cache_k.size(2)
         h = self.norm(x)
@@ -152,18 +156,14 @@ class CacheAwareCausalAttention(nn.Module):
 
         scores = torch.matmul(q, k_all.transpose(-2, -1)) * self.scale  # (B, H, T, L_ctx + T)
 
-        # Strictly causal + bounded left_ctx window mask so every query i in [0..T-1]
-        # attends to exactly [i .. i + L_ctx] in k_all (which is L_ctx past tokens + self)!
-        # This guarantees 100% equivalence between chunked streaming (even T=1 or T=2)
-        # and full-sequence execution!
         q_idx = torch.arange(T, device=x.device).unsqueeze(1)  # (T, 1)
         k_idx = torch.arange(L_ctx + T, device=x.device).unsqueeze(0)  # (1, L_ctx + T)
         rel_pos = k_idx - (q_idx + L_ctx)  # (T, L_ctx + T), 0 at self, negative for past
         invalid = (rel_pos > 0) | (rel_pos < -L_ctx)
-        slopes = torch.tensor(
-            [0.15, 0.35, 0.75, 1.50][: self.n_heads], device=x.device, dtype=scores.dtype
-        ).view(1, self.n_heads, 1, 1)
-        scores = scores + slopes * torch.clamp(rel_pos, min=-L_ctx, max=0).to(scores.dtype).unsqueeze(0).unsqueeze(0)
+
+        slopes = torch.abs(self.head_slopes).to(scores.dtype)
+        rel_clamped = torch.clamp(rel_pos, min=-L_ctx, max=0).to(scores.dtype).unsqueeze(0).unsqueeze(0)
+        scores = scores + slopes * rel_clamped
         scores = scores.masked_fill(invalid.unsqueeze(0).unsqueeze(0), -1e4)
 
         attn = torch.softmax(scores, dim=-1)
@@ -202,14 +202,6 @@ class CacheAwareConvModule(nn.Module):
         x: torch.Tensor,
         cache_conv: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Args:
-            x: (B, T, D)
-            cache_conv: (B, D, kernel_size - 1)
-        Returns:
-            out: (B, T, D)
-            next_cache_conv: (B, D, kernel_size - 1)
-        """
         h = self.norm(x)
         u, v = self.pw1(h).chunk(2, dim=-1)
         gated = u * torch.sigmoid(v)  # GLU: (B, T, D)
@@ -259,7 +251,7 @@ class FastConformerBlock(nn.Module):
 
 
 class CacheAwareFastConformerEncoder(nn.Module):
-    """Full Cache-Aware Streaming FastConformer Encoder."""
+    """Full Cache-Aware Streaming FastConformer Encoder v2 with 4x Subsampling & SC-InterCTC."""
 
     def __init__(
         self,
@@ -270,6 +262,7 @@ class CacheAwareFastConformerEncoder(nn.Module):
         d_ff: int = 1024,
         conv_kernel: int = 9,
         left_ctx: int = 64,
+        vocab_size: int = 1024,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -281,8 +274,18 @@ class CacheAwareFastConformerEncoder(nn.Module):
         self.d_ff = d_ff
         self.conv_kernel = conv_kernel
         self.left_ctx = left_ctx
+        self.vocab_size = vocab_size
+        self.subsampling_factor = 4
 
-        self.subsampling = CausalSubsampling8x(n_mels, d_model)
+        # Self-Conditioned Intermediate CTC at layers 4 & 8 (for 12L Base) or layers 3 & 6 (for 8L Tiny)
+        if n_layers >= 12:
+            self.inter_layers = (3, 7)
+        elif n_layers >= 8:
+            self.inter_layers = (2, 5)
+        else:
+            self.inter_layers = (max(0, n_layers // 2 - 1),)
+
+        self.subsampling = CausalSubsampling4x(n_mels, d_model)
         self.blocks = nn.ModuleList(
             [
                 FastConformerBlock(
@@ -297,6 +300,14 @@ class CacheAwareFastConformerEncoder(nn.Module):
             ]
         )
         self.final_norm = nn.LayerNorm(d_model)
+
+        # Shared CTC projection head + SC-InterCTC norms & conditioning projections
+        self.ctc_head = nn.Linear(d_model, vocab_size)
+        with torch.no_grad():
+            self.ctc_head.bias.zero_()
+        self.inter_norms = nn.ModuleList([nn.LayerNorm(d_model) for _ in self.inter_layers])
+        self.inter_cond_proj = nn.Linear(vocab_size, d_model, bias=False)
+        nn.init.normal_(self.inter_cond_proj.weight, mean=0.0, std=0.02)
 
     def init_caches(
         self, batch_size: int = 1, device: torch.device | str = "cpu", dtype: torch.dtype = torch.float32
@@ -326,21 +337,28 @@ class CacheAwareFastConformerEncoder(nn.Module):
         cache_conv: torch.Tensor,
         return_layer_states: bool = False,
     ):
-        """Run one streaming chunk (or full sequence) with explicit cache tensors."""
+        """Run one streaming chunk (or full sequence) with explicit cache tensors & SC-InterCTC."""
         x, next_s0, next_s1, next_s2 = self.subsampling(mel, cache_s0, cache_s1, cache_s2)
 
         next_k_list = []
         next_v_list = []
         next_conv_list = []
-        layer_states = []
+        inter_logits_list = []
 
+        inter_idx = 0
         for i, blk in enumerate(self.blocks):
             x, nk, nv, nc = blk(x, cache_k[i], cache_v[i], cache_conv[i])
             next_k_list.append(nk)
             next_v_list.append(nv)
             next_conv_list.append(nc)
-            if return_layer_states:
-                layer_states.append(self.final_norm(x))
+            if i in self.inter_layers:
+                h_inter = self.inter_norms[inter_idx](x)
+                inter_idx += 1
+                logits_inter = self.ctc_head(h_inter)
+                probs_inter = torch.softmax(logits_inter, dim=-1)
+                x = x + self.inter_cond_proj(probs_inter)
+                if return_layer_states:
+                    inter_logits_list.append(logits_inter)
 
         x = self.final_norm(x)
         next_k = torch.stack(next_k_list, dim=0)
@@ -348,16 +366,16 @@ class CacheAwareFastConformerEncoder(nn.Module):
         next_conv = torch.stack(next_conv_list, dim=0)
 
         if return_layer_states:
-            return x, next_s0, next_s1, next_s2, next_k, next_v, next_conv, layer_states
+            return x, next_s0, next_s1, next_s2, next_k, next_v, next_conv, inter_logits_list
         return x, next_s0, next_s1, next_s2, next_k, next_v, next_conv
 
     def forward(self, mel: torch.Tensor, return_layer_states: bool = False):
         """Convenience full-sequence forward starting from zero caches."""
         B = mel.size(0)
         T = mel.size(1)
-        rem = T % 8
+        rem = T % 4
         if rem != 0:
-            mel = F.pad(mel, (0, 0, 0, 8 - rem))
+            mel = F.pad(mel, (0, 0, 0, 4 - rem))
         caches = self.init_caches(B, device=mel.device, dtype=mel.dtype)
         out = self.forward_streaming(mel, *caches, return_layer_states=return_layer_states)
         if return_layer_states:

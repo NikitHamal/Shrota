@@ -36,12 +36,17 @@ def _(heartbeat, json, mo, os, re, subprocess, tick, time, urllib):
         except Exception:
             return {}
 
-    def tail(p, n=4):
-        try:
-            with open(p, encoding="utf-8", errors="replace") as f:
-                return [ln.rstrip()[:150] for ln in f.readlines()[-n:]]
-        except Exception:
-            return []
+    def tail(paths, n=4):
+        if isinstance(paths, str):
+            paths = [paths]
+        for p in paths:
+            try:
+                if os.path.exists(p) and os.path.getsize(p) > 0:
+                    with open(p, encoding="utf-8", errors="replace") as f:
+                        return [ln.rstrip()[:150] for ln in f.readlines()[-n:]]
+            except Exception:
+                pass
+        return []
 
     def sh(cmd, t=3):
         try:
@@ -54,7 +59,7 @@ def _(heartbeat, json, mo, os, re, subprocess, tick, time, urllib):
 
     def progress(lines):
         for ln in reversed(lines):
-            m = re.search(r"step[= ](\d+)/(\d+)", ln)
+            m = re.search(r"[sS]tep[= ]+(\d+)/(\d+)", str(ln))
             if m:
                 return int(m.group(1)), int(m.group(2))
         return None
@@ -71,7 +76,7 @@ def _(heartbeat, json, mo, os, re, subprocess, tick, time, urllib):
 
     def card(title, status, rows, log):
         label, bg, fg = state_of(status)
-        pr = progress(log)
+        pr = progress((log or []) + ([status] if status else []))
         bar = ""
         if pr and label == "Running":
             pct = 100.0 * pr[0] / max(pr[1], 1)
@@ -99,7 +104,7 @@ def _(heartbeat, json, mo, os, re, subprocess, tick, time, urllib):
     gpu = sh("nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw "
              "--format=csv,noheader,nounits").split(",")
     gpu = [g.strip() for g in gpu] if len(gpu) == 5 else ["-"] * 5
-    jobs = [ln.split(None, 1)[1][:90] for ln in sh("ps -eo pid,args | grep -E 'scripts/(train|distill|eval|build|bench)' | grep -v grep").splitlines() if ln.strip()]
+    jobs = [ln.split(None, 1)[1][:90] for ln in sh("ps -eo pid,args | grep -E 'scripts/(train|distill|eval|build|bench|gpu_experiments|complete_phase1)' | grep -v grep").splitlines() if ln.strip()]
     jobs = [j for j in jobs if not j.startswith(("bash -c", "/bin/sh"))]
 
     def pages():
@@ -113,35 +118,51 @@ def _(heartbeat, json, mo, os, re, subprocess, tick, time, urllib):
 
     def dom(m, d):
         v = (m.get("domains") or {}).get(d)
-        return f"{v['wer']} / {v['cer']}" if v else "-"
+        return f"{v['wer']}% / {v['cer']}%" if v else "-"
 
-    onnx = sh("ls -l /work/shrota/checkpoints/onnx 2>/dev/null | awk 'NF>8 {printf \"%s %.1f MB\\n\", $9, $5/1048576}'").splitlines()
+    onnx = sh("ls -l /work/shrota/checkpoints/onnx 2>/dev/null | awk 'NF>8 {printf \"%s %.2f MB\\n\", $9, $5/1048576}'").splitlines()
+    lm_mb = f"{os.path.getsize('/work/shrota/checkpoints/nepali_4gram_lm.json')/1048576:.2f} MB" if os.path.exists("/work/shrota/checkpoints/nepali_4gram_lm.json") else "pending"
 
-    c1 = card("1  Data", status.get("phase1"), [
+    c1 = card("1  Data & Autopsy (v2)", status.get("phase1"), [
+        ("Autopsy report", "eval/v1_autopsy.md" if os.path.exists("/work/shrota/eval/v1_autopsy.md") else "pending"),
         ("Gold suites", "FLEURS, SLR54, Conv, Vedic"),
-        ("Baselines", "recorded" if bl else "missing"), ("Whisper-small FLEURS WER", dom(bl.get("whisper_small", {}), "eval_fleurs_ne_np").split(" /")[0]),
-        ("MMS-1b FLEURS WER", dom(bl.get("mms_1b_npi", {}), "eval_fleurs_ne_np").split(" /")[0])], tail(f"{LOGS}/phase1_data.log", 2))
-    c2 = card("2  Shrota-Base", status.get("phase2"), [
-        ("Params", f"{base.get('params_m', '-')} M"), ("INT8 size", f"{base.get('size_int8_mb', '-')} MB"),
-        ("1-thread RTF", base.get("cpu_1thread_rtf", "-")), ("FLEURS WER / CER", dom(base, "eval_fleurs_ne_np")),
-        ("Conv WER / CER", dom(base, "eval_conv_story")), ("Vedic WER / CER", dom(base, "eval_vedic_gold"))],
-        tail(f"{LOGS}/train_base.log", 3))
+        ("Global Fixed CMVN", "baked in ONNX" if os.path.exists("/work/shrota/checkpoints/mel_cmvn.json") else "pending"),
+        ("4-gram Nepali LM", lm_mb),
+        ("Whisper-small FLEURS WER", dom(bl.get("whisper_small", {}), "eval_fleurs_ne_np").split(" /")[0]),
+        ("MMS-1b FLEURS WER", dom(bl.get("mms_1b_npi", {}), "eval_fleurs_ne_np").split(" /")[0])],
+        tail([f"{LOGS}/phase1_v2b.log", f"{LOGS}/phase1_v2.log", f"{LOGS}/phase1_data.log"], 3))
+
+    c2 = card("2  Shrota-Base v2 (4x + SC-InterCTC)", status.get("phase2"), [
+        ("Params / INT8", f"{base.get('params_m', '-')} M / {base.get('size_int8_mb', '-')} MB"),
+        ("1-thread RTF / Lat", f"{base.get('cpu_1thread_rtf', '-')} ({base.get('streaming_latency_ms', '-')} ms)"),
+        ("SLR54 Gold WER / CER", dom(base, "eval_slr54_gold")),
+        ("FLEURS WER / CER", dom(base, "eval_fleurs_ne_np")),
+        ("Conv WER / CER", dom(base, "eval_conv_story")),
+        ("Vedic WER / CER", dom(base, "eval_vedic_gold"))],
+        tail([f"{LOGS}/train_base_v2_clean.log", f"{LOGS}/eval_base_v2.log", f"{LOGS}/train_base_v2.log", f"{LOGS}/train_base.log"], 3))
+
     b, a = shud.get("before_shuddha", {}), shud.get("after_shuddha", {})
-    c3 = card("3  Shrota-Shuddha", status.get("phase3"), [
-        ("INT8 size", f"{shud.get('size_int8_mb', '-')} MB"), ("Latency", f"{shud.get('clause_latency_ms', '-')} ms"),
-        ("WER", f"{b.get('wer', '-')} to {a.get('wer', '-')}"), ("Punct F1", f"{b.get('punct_f1', '-')} to {a.get('punct_f1', '-')}"),
-        ("Hraswa-dirgha", f"{b.get('hraswa_dirgha_acc', '-')} to {a.get('hraswa_dirgha_acc', '-')}")],
-        tail(f"{LOGS}/train_shuddha.log", 2))
-    c4 = card("4  Shrota-Tiny", status.get("phase4"), [
-        ("INT8 size", f"{tiny.get('size_int8_mb', 'pending')} MB" if tiny else "pending"),
-        ("FLEURS WER / CER", dom(tiny, "eval_fleurs_ne_np") if tiny else "-")],
-        tail(f"{LOGS}/distill_tiny.log", 4))
-    c5 = card("5  Studio and export", status.get("phase5"), [
+    c3 = card("3  Shrota-Shuddha v2", status.get("phase3"), [
+        ("INT8 size / Lat", f"{shud.get('size_int8_mb', '-')} MB / {shud.get('clause_latency_ms', '-')} ms"),
+        ("Real Error WER", f"{b.get('wer', '-')}% -> {a.get('wer', '-')}%"),
+        ("Punct F1", f"{b.get('punct_f1', '-')}% -> {a.get('punct_f1', '-')}%"),
+        ("Hraswa-dirgha Acc", f"{b.get('hraswa_dirgha_acc', '-')}% -> {a.get('hraswa_dirgha_acc', '-')}%")],
+        tail([f"{LOGS}/train_shuddha_v2.log", f"{LOGS}/train_shuddha.log"], 3))
+
+    c4 = card("4  Shrota-Tiny v2 (KD)", status.get("phase4"), [
+        ("Params / INT8", f"{tiny.get('params_m', '-')} M / {tiny.get('size_int8_mb', 'pending')} MB" if tiny else "pending"),
+        ("1-thread RTF", f"{tiny.get('cpu_1thread_rtf', '-')}" if tiny else "-"),
+        ("SLR54 Gold WER / CER", dom(tiny, "eval_slr54_gold") if tiny else "-"),
+        ("FLEURS WER / CER", dom(tiny, "eval_fleurs_ne_np") if tiny else "-"),
+        ("Vedic WER / CER", dom(tiny, "eval_vedic_gold") if tiny else "-")],
+        tail([f"{LOGS}/distill_tiny_v2.log", f"{LOGS}/distill_tiny.log"], 4))
+
+    c5 = card("5  Studio & Export (v2)", status.get("phase5", "Done" if final else "Running"), [
         ("Final metrics", "written" if final else "pending"), ("Studio page", pages()),
         ("ONNX bundles", str(len(onnx)))] + [(n.split()[0], " ".join(n.split()[1:])) for n in onnx[:6]], [])
 
     hdr = (f"<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:16px'>"
-           f"<span style='font-size:22px;font-weight:600;margin-right:12px'>Shrota</span>"
+           f"<span style='font-size:22px;font-weight:600;margin-right:12px'>Shrota v2</span>"
            + "".join(f"<span style='background:#F4EFEA;padding:4px 12px;border-radius:999px;font-size:12px'>{esc(t)}</span>" for t in [
                f"GPU {gpu[0]}%", f"VRAM {gpu[1]} / {gpu[2]} MiB", f"{gpu[3]} C", f"{gpu[4]} W",
                time.strftime("%H:%M:%S UTC", time.gmtime())]) + "</div>")

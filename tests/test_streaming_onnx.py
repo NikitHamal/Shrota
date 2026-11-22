@@ -4,7 +4,7 @@ import numpy as np
 import onnxruntime as ort
 import torch
 
-from shrota.tdt_ctc import ShrotaASRModel
+from shrota.tdt_ctc import ShrotaASRModel, rnnt_loss_exact
 from shrota.shuddha import ShrotaShuddhaModel
 from shrota.export_onnx import export_asr_onnx, export_shuddha_onnx
 
@@ -15,7 +15,9 @@ def test_streaming_chunk_vs_offline_and_onnx_parity():
     mel = torch.randn(1, 64, 80)  # 64 frames = 640 ms (4 chunks of 16 frames = 160 ms each)
 
     with torch.no_grad():
-        full_enc = model.encoder(mel)
+        full_enc, inter_logits = model.encoder(mel, return_layer_states=True)
+        assert full_enc.shape == (1, 16, 128), f"Expected 4x subsampling (1, 16, 128), got {full_enc.shape}"
+        assert len(inter_logits) == 2
         full_ctc = model.ctc_head(full_enc)
 
         caches = model.encoder.init_caches(1)
@@ -59,3 +61,12 @@ def test_streaming_chunk_vs_offline_and_onnx_parity():
         shuddha = ShrotaShuddhaModel(vocab_size=1024).eval()
         s_info = export_shuddha_onnx(shuddha, tmpdir)
         assert s_info["int8"]["size_mb"] <= 2.5
+
+    # Verify exact RNN-T lattice loss and hybrid SC-InterCTC + TDT backward pass
+    logits_4d = torch.randn(2, 8, 4, 16, requires_grad=True)
+    targets_2d = torch.tensor([[1, 2, 3], [4, 5, 0]], dtype=torch.long)
+    l_lens = torch.tensor([8, 6], dtype=torch.long)
+    t_lens = torch.tensor([3, 2], dtype=torch.long)
+    rnnt_l = rnnt_loss_exact(logits_4d, targets_2d, l_lens, t_lens, blank=0)
+    rnnt_l.backward()
+    assert torch.isfinite(rnnt_l) and logits_4d.grad is not None and torch.isfinite(logits_4d.grad).all()

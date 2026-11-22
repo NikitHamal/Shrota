@@ -40,7 +40,11 @@ export function normalizeText(text, keepPunct = true, stripAccents = true) {
     if (ALLOWED_PUNCT.has(ch)) {
       outChars.push(keepPunct ? ch : " ");
     } else if (LETTER_MARK_NUM_RE.test(ch)) {
-      outChars.push(ch);
+      if (ch >= "0" && ch <= "9") {
+        outChars.push(String.fromCharCode(0x0966 + (ch.charCodeAt(0) - 48)));
+      } else {
+        outChars.push(ch);
+      }
     } else if (/\s/.test(ch)) {
       outChars.push(" ");
     } else {

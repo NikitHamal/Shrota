@@ -1,4 +1,4 @@
-// Studio tab controller: model/Shuddha controls, example clips with audio, file upload, live microphone.
+// Studio tab controller: model/Shuddha controls, 18 example clips with decoded previews, file upload, live microphone.
 import { applyClientShuddha } from "./shuddha_client.js";
 import { getEngine } from "./asr/runtime.js";
 import { decodeToMono16k } from "./asr/audio.js";
@@ -20,7 +20,7 @@ const st = {
   manifest: null,
 };
 
-const MODEL_LABEL = { base: "Shrota-Base", tiny: "Shrota-Tiny" };
+const MODEL_LABEL = { base: "Shrota-Base v2", tiny: "Shrota-Tiny v2" };
 
 function setStatus(text, kind = "idle") {
   const chip = $("status-chip");
@@ -176,6 +176,7 @@ async function switchModel(key) {
   if (st.live) await stopLive();
   st.model = key;
   renderModelSelector();
+  renderSamples();
   if (st.item?.pcm) transcribeItem(st.item);
   else ensureModel(key).then(() => setStatus("Ready", "ok")).catch(showError);
 }
@@ -201,7 +202,19 @@ async function loadSample(sample, play = true) {
   const audio = attachAudio(sample.audio_url);
   audio.currentTime = 0;
   if (play) audio.play().catch(() => {});
-  const item = { title: sample.title, lang: sample.lang || "ne", reference: sample.reference, pcm: null, words: [], busy: true, done: false, progress: 0 };
+  const preRaw = st.model === "tiny" ? (sample.tiny_shuddha || sample.base_raw || "") : (sample.base_raw || sample.base_shuddha || "");
+  const item = {
+    title: sample.title,
+    lang: sample.lang || "ne",
+    reference: sample.reference,
+    pcm: null,
+    words: sample.words || [],
+    raw: preRaw,
+    busy: true,
+    done: Boolean(preRaw),
+    progress: preRaw ? 1 : 0,
+    score: preRaw && sample.reference ? { raw: scoreAgainst(sample.reference, preRaw), shuddha: scoreAgainst(sample.reference, (sample.lang === "sa" ? preRaw : applyClientShuddha(preRaw, true))) } : null,
+  };
   st.item = item;
   render();
   try {
@@ -284,11 +297,15 @@ function renderSamples() {
   const list = $("sample-deck-list");
   if (!st.samples.length) { list.innerHTML = `<div class="empty-state">No example clips found</div>`; return; }
   list.innerHTML = st.samples
-    .map((s) => `<div class="sample-item" data-id="${esc(s.id)}" tabindex="0" role="button">
-      <div class="sample-head"><span>${esc(s.title)}</span><span class="m3-chip secondary">${s.lang === "sa" ? "Sanskrit" : "Nepali"} · ${s.duration_s}s</span></div>
-      <div class="sample-preview deva">${esc(s.reference || "")}</div>
-      <div class="sample-play"><span class="play-icon" aria-hidden="true"></span>Play and transcribe</div>
-    </div>`)
+    .map((s) => {
+      const dec = st.model === "tiny" ? (s.tiny_shuddha || s.base_shuddha || s.base_raw || "") : (s.base_shuddha || s.base_raw || "");
+      return `<div class="sample-item" data-id="${esc(s.id)}" tabindex="0" role="button">
+        <div class="sample-head"><span>${esc(s.title)}</span><span class="m3-chip secondary">${s.lang === "sa" ? "Sanskrit" : "Nepali"} · ${s.duration_s}s</span></div>
+        <div class="sample-preview deva">${esc(dec || s.reference || "")}</div>
+        ${dec && s.reference && dec !== s.reference ? `<div class="sample-preview deva" style="font-size:12px;color:#6E5E55;margin-top:2px">Ref: ${esc(s.reference)}</div>` : ""}
+        <div class="sample-play"><span class="play-icon" aria-hidden="true"></span>Play and transcribe</div>
+      </div>`;
+    })
     .join("");
   list.querySelectorAll(".sample-item").forEach((el) => {
     const go = () => loadSample(st.samples.find((s) => s.id === el.dataset.id));
@@ -328,7 +345,19 @@ export async function initStudio() {
   const seen = new Set();
   st.samples = [...curated, ...extra]
     .filter((x) => x.audio_url && !seen.has(x.audio_url) && seen.add(x.audio_url))
-    .map(({ id, title, lang, domain, audio_url, duration_s, reference }) => ({ id, title, lang: lang || "ne", domain, audio_url, duration_s, reference }));
+    .map((x) => ({
+      id: x.id,
+      title: x.title,
+      lang: x.lang || "ne",
+      domain: x.domain,
+      audio_url: x.audio_url,
+      duration_s: x.duration_s,
+      reference: x.reference,
+      base_raw: x.base_raw || "",
+      base_shuddha: x.base_shuddha || "",
+      tiny_shuddha: x.tiny_shuddha || "",
+      words: x.words || [],
+    }));
   renderSamples();
   requestAnimationFrame(tick);
   // Warm the runtime and the default model in the background so the first click is fast.

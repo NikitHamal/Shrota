@@ -84,9 +84,12 @@ def eval_4domain_quick(model: ShrotaASRModel, tok: ShrotaTokenizer, suites: dict
     m_s = evaluate_asr_model(model, tok, suites["eval_slr54_gold"][:200], device=device)
     m_c = evaluate_asr_model(model, tok, suites["eval_conv_story"][:150], device=device)
     m_v = evaluate_asr_model(model, tok, suites["eval_vedic_gold"][:120], device=device)
+    # Composite 4-domain gold error score (Nepali WER + Vedic Sanskrit CER)
+    score = round(0.30 * m_f["wer"] + 0.30 * m_s["wer"] + 0.25 * m_c["wer"] + 0.15 * m_v["cer"], 2)
     avg_wer = round((m_f["wer"] + m_s["wer"] + m_c["wer"] + m_v["wer"]) / 4.0, 2)
     avg_cer = round((m_f["cer"] + m_s["cer"] + m_c["cer"] + m_v["cer"]) / 4.0, 2)
-    return avg_wer, {
+    return score, {
+        "score": score,
         "avg_wer": avg_wer,
         "avg_cer": avg_cer,
         "fleurs_wer": m_f["wer"],
@@ -111,7 +114,8 @@ def export_and_save_summary(
         for k, v in suites.items()
     }
     onnx_dir = CKPT_DIR / "onnx"
-    onnx_info = export_asr_onnx(model, str(onnx_dir), prefix=prefix, chunk_frames=16)
+    m_cpu = copy.deepcopy(model).cpu().eval()
+    onnx_info = export_asr_onnx(m_cpu, str(onnx_dir), prefix=prefix, chunk_frames=16)
 
     sess_opts = ort.SessionOptions()
     sess_opts.intra_op_num_threads = 1

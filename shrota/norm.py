@@ -59,8 +59,11 @@ def normalize_text(text: str, keep_punct: bool = True, strip_accents: bool = Tru
             else:
                 out_chars.append(" ")
         elif cat.startswith(("L", "M", "N")):
-            # Normalize Devanagari digits ०-९ to standard or keep consistent Devanagari
-            out_chars.append(ch)
+            # Normalize ASCII digits 0-9 to canonical Devanagari digits ०-९
+            if "0" <= ch <= "9":
+                out_chars.append(chr(0x0966 + ord(ch) - ord("0")))
+            else:
+                out_chars.append(ch)
         elif ch.isspace():
             out_chars.append(" ")
         else:
