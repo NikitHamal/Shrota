@@ -111,8 +111,8 @@ class CacheAwareCausalAttention(nn.Module):
 
         self.norm = nn.LayerNorm(d_model)
         self.q_proj = nn.Linear(d_model, d_model)
-        self.k_proj = nn.Linear(d_model, d_model)
-        self.v_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model, bias=False)
+        self.v_proj = nn.Linear(d_model, d_model, bias=False)
         self.out_proj = nn.Linear(d_model, d_model)
         self.drop = nn.Dropout(dropout)
 
@@ -217,7 +217,7 @@ class CacheAwareConvModule(nn.Module):
 
 
 class FastConformerBlock(nn.Module):
-    """Single Cache-Aware FastConformer Block (FFN1 -> MHSA -> Conv -> FFN2 -> LayerNorm)."""
+    """Single Cache-Aware Pre-LN FastConformer Block (FFN1 -> MHSA -> Conv -> FFN2)."""
 
     def __init__(
         self,
@@ -233,7 +233,6 @@ class FastConformerBlock(nn.Module):
         self.attn = CacheAwareCausalAttention(d_model, n_heads, left_ctx, dropout)
         self.conv = CacheAwareConvModule(d_model, conv_kernel, dropout)
         self.ff2 = FeedForwardModule(d_model, d_ff, dropout)
-        self.final_norm = nn.LayerNorm(d_model)
 
     def forward(
         self,
@@ -248,7 +247,6 @@ class FastConformerBlock(nn.Module):
         conv_out, next_conv = self.conv(x, cache_conv)
         x = x + conv_out
         x = x + 0.5 * self.ff2(x)
-        x = self.final_norm(x)
         return x, next_k, next_v, next_conv
 
 
@@ -290,6 +288,7 @@ class CacheAwareFastConformerEncoder(nn.Module):
                 for _ in range(n_layers)
             ]
         )
+        self.final_norm = nn.LayerNorm(d_model)
 
     def init_caches(
         self, batch_size: int = 1, device: torch.device | str = "cpu", dtype: torch.dtype = torch.float32
@@ -333,8 +332,9 @@ class CacheAwareFastConformerEncoder(nn.Module):
             next_v_list.append(nv)
             next_conv_list.append(nc)
             if return_layer_states:
-                layer_states.append(x)
+                layer_states.append(self.final_norm(x))
 
+        x = self.final_norm(x)
         next_k = torch.stack(next_k_list, dim=0)
         next_v = torch.stack(next_v_list, dim=0)
         next_conv = torch.stack(next_conv_list, dim=0)
