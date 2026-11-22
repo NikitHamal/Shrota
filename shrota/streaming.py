@@ -134,16 +134,19 @@ def apply_shuddha_refinement(
             inp = torch.tensor([ids], dtype=torch.long, device=next(shuddha_model.parameters()).device)
             with torch.no_grad():
                 tok_logits, p_logits = shuddha_model(inp)
-                pred_ids = tok_logits[0].argmax(dim=-1).tolist()
+                probs = F.softmax(tok_logits[0].float(), dim=-1)
+                top_probs, top_ids = probs.max(dim=-1)
+                pred_ids = top_ids.tolist()
+                pred_confs = top_probs.tolist()
                 punct_tags_pred = p_logits[0].argmax(dim=-1).tolist()
             safe_ids = []
-            for orig_id, new_id in zip(ids, pred_ids):
-                if orig_id == new_id:
+            for orig_id, new_id, conf in zip(ids, pred_ids, pred_confs):
+                if orig_id == new_id or conf < 0.85:
                     safe_ids.append(orig_id)
                 else:
                     t_orig = tokenizer.id_to_token.get(orig_id, "").lstrip(WORD_BOUNDARY)
                     t_new = tokenizer.id_to_token.get(new_id, "").lstrip(WORD_BOUNDARY)
-                    if t_orig and t_new and devanagari_edit_distance(t_orig, t_new) <= 2 and abs(len(t_orig) - len(t_new)) <= 1:
+                    if t_orig and t_new and devanagari_edit_distance(t_orig, t_new) <= 1 and len(t_orig) == len(t_new):
                         safe_ids.append(new_id)
                     else:
                         safe_ids.append(orig_id)

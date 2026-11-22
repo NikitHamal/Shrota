@@ -26,15 +26,21 @@ class CausalSubsampling8x(nn.Module):
         self.n_mels = n_mels
         self.d_model = d_model
 
+        # Direct causal 8-frame (80ms) spectrogram patch residual projection
+        self.frame_proj = nn.Linear(n_mels * 8, d_model)
+
         self.conv0 = nn.Conv1d(n_mels, d_model, kernel_size=3, stride=2, padding=0)
+        self.norm0 = nn.LayerNorm(d_model)
         self.act0 = nn.SiLU()
 
         self.dw1 = nn.Conv1d(d_model, d_model, kernel_size=3, stride=2, padding=0, groups=d_model)
         self.pw1 = nn.Conv1d(d_model, d_model, kernel_size=1)
+        self.norm1 = nn.LayerNorm(d_model)
         self.act1 = nn.SiLU()
 
         self.dw2 = nn.Conv1d(d_model, d_model, kernel_size=3, stride=2, padding=0, groups=d_model)
         self.pw2 = nn.Conv1d(d_model, d_model, kernel_size=1)
+        self.norm2 = nn.LayerNorm(d_model)
         self.act2 = nn.SiLU()
 
         self.out_norm = nn.LayerNorm(d_model)
@@ -56,20 +62,23 @@ class CausalSubsampling8x(nn.Module):
             x: (B, T // 8, d_model)
             next_s0, next_s1, next_s2
         """
+        B, T, _ = mel.shape
+        direct = self.frame_proj(mel.reshape(B, T // 8, self.n_mels * 8))
+
         x0 = mel.transpose(1, 2)  # (B, 80, T)
         next_s0 = x0[:, :, -1:]
         x0_pad = torch.cat([cache_s0, x0], dim=2)
-        x1 = self.act0(self.conv0(x0_pad))  # (B, d_model, T//2)
+        x1 = self.act0(self.norm0(self.conv0(x0_pad).transpose(1, 2))).transpose(1, 2)  # (B, d_model, T//2)
 
         next_s1 = x1[:, :, -1:]
         x1_pad = torch.cat([cache_s1, x1], dim=2)
-        x2 = self.act1(self.pw1(self.dw1(x1_pad)))  # (B, d_model, T//4)
+        x2 = self.act1(self.norm1(self.pw1(self.dw1(x1_pad)).transpose(1, 2))).transpose(1, 2)  # (B, d_model, T//4)
 
         next_s2 = x2[:, :, -1:]
         x2_pad = torch.cat([cache_s2, x2], dim=2)
-        x3 = self.act2(self.pw2(self.dw2(x2_pad)))  # (B, d_model, T//8)
+        x3 = self.act2(self.norm2(self.pw2(self.dw2(x2_pad)).transpose(1, 2)))  # (B, T//8, d_model)
 
-        out = self.out_norm(x3.transpose(1, 2))  # (B, T//8, d_model)
+        out = self.out_norm(x3 + direct)  # (B, T//8, d_model)
         return out, next_s0, next_s1, next_s2
 
 

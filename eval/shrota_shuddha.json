@@ -1,0 +1,20 @@
+{
+  "model": "Shrota-Shuddha",
+  "params_m": 1.59,
+  "size_int8_mb": 1.807,
+  "clause_latency_ms": 0.53,
+  "before_shuddha": {
+    "wer": 30.27,
+    "cer": 1.5,
+    "punct_f1": 0.0,
+    "num_utts": 725,
+    "hraswa_dirgha_acc": 75.63
+  },
+  "after_shuddha": {
+    "wer": 10.92,
+    "cer": 1.64,
+    "punct_f1": 70.72,
+    "num_utts": 725,
+    "hraswa_dirgha_acc": 89.64
+  }
+}

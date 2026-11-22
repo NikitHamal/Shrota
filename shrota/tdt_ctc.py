@@ -98,8 +98,10 @@ class ShrotaASRModel(nn.Module):
             dropout=dropout,
         )
         self.ctc_head = nn.Linear(d_model, vocab_size)
+        # Initialize blank bias slightly negative to prevent early CTC blank plateau
+        with torch.no_grad():
+            self.ctc_head.bias[0] = -2.0
         self.predictor = Stateless2GramPredictor(vocab_size=vocab_size, d_pred=d_model)
-        # Share token embeddings with CTC output weights to improve convergence and save memory
         self.joint = TDTJointNetwork(d_enc=d_model, d_pred=d_model, d_joint=d_model, vocab_size=vocab_size)
 
     @classmethod
@@ -151,6 +153,7 @@ class ShrotaASRModel(nn.Module):
             mel = F.pad(mel, (0, 0, 0, 8 - rem))
             T_mel = mel.size(1)
 
+        layer_states = None
         if chunk_frames is not None and chunk_frames < T_mel:
             caches = self.encoder.init_caches(B, device=mel.device, dtype=mel.dtype)
             enc_chunks = []
@@ -163,13 +166,13 @@ class ShrotaASRModel(nn.Module):
                 caches = out_c[1:]
             enc_out = torch.cat(enc_chunks, dim=1)
         else:
-            enc_out = self.encoder(mel)  # (B, T_enc, D)
+            enc_out, layer_states = self.encoder(mel, return_layer_states=True)  # (B, T_enc, D)
 
         enc_lens = torch.clamp(mel_lens // 8, min=1, max=enc_out.size(1))
         ctc_logits = self.ctc_head(enc_out)  # (B, T_enc, V)
         ctc_log_probs = F.log_softmax(ctc_logits.float(), dim=-1).transpose(0, 1)  # (T_enc, B, V)
 
-        ctc_loss = F.ctc_loss(
+        main_ctc_loss = F.ctc_loss(
             ctc_log_probs,
             targets,
             enc_lens,
@@ -178,6 +181,18 @@ class ShrotaASRModel(nn.Module):
             reduction="mean",
             zero_infinity=True,
         )
+
+        # Intermediate CTC (InterCTC) at 1/3 and 2/3 encoder depth for fast deep Conformer convergence
+        if layer_states is not None and len(layer_states) >= 6:
+            l1 = layer_states[len(layer_states) // 3 - 1]
+            l2 = layer_states[(2 * len(layer_states)) // 3 - 1]
+            lp1 = F.log_softmax(self.ctc_head(l1).float(), dim=-1).transpose(0, 1)
+            lp2 = F.log_softmax(self.ctc_head(l2).float(), dim=-1).transpose(0, 1)
+            inter1 = F.ctc_loss(lp1, targets, enc_lens, target_lens, blank=blank_id, reduction="mean", zero_infinity=True)
+            inter2 = F.ctc_loss(lp2, targets, enc_lens, target_lens, blank=blank_id, reduction="mean", zero_infinity=True)
+            ctc_loss = 0.65 * main_ctc_loss + 0.175 * inter1 + 0.175 * inter2
+        else:
+            ctc_loss = main_ctc_loss
 
         # Frame-aligned Stateless TDT / Transducer training objective:
         # Align each target u in [0..U-1] to its proportional acoustic frame t_u and
@@ -204,6 +219,16 @@ class ShrotaASRModel(nn.Module):
         )
         tok_loss = (ce_tok * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
+        # Direct acoustic token supervision on ctc_logits at proportional frames t_pos
+        # Eliminates CTC blank plateau from step 1 and locks in monotonic subword alignment
+        ctc_aligned = torch.gather(ctc_logits, 1, t_pos.unsqueeze(-1).expand(-1, -1, self.vocab_size))
+        ce_ctc_align = F.cross_entropy(
+            ctc_aligned.float().transpose(1, 2),
+            targets,
+            reduction="none",
+        )
+        ctc_align_loss = (ce_ctc_align * mask).sum() / torch.clamp(mask.sum(), min=1.0)
+
         # Target duration skips: how many acoustic frames between token u and u+1 (mapped to {0,1,2,4})
         t_next = torch.cat([t_pos[:, 1:], enc_lens.unsqueeze(1)], dim=1)
         frame_delta = torch.clamp(t_next - t_pos, min=0)
@@ -228,5 +253,5 @@ class ShrotaASRModel(nn.Module):
         # Blend joint contextual prediction with CTC acoustic prediction
         tdt_loss = tok_loss + 0.25 * dur_loss + 0.05 * (blank_logits[:, :, blank_id].pow(2).mean() * 0.0)
 
-        total_loss = 0.7 * ctc_loss + 0.3 * tdt_loss
+        total_loss = 0.55 * ctc_loss + 0.25 * ctc_align_loss + 0.20 * tdt_loss
         return total_loss, ctc_loss, tdt_loss, ctc_logits

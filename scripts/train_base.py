@@ -94,18 +94,27 @@ def apply_spec_and_mic_augment(mel: torch.Tensor, mel_lens: torch.Tensor) -> tor
 class PrecomputedMelBatcher:
     """High-speed GPU-resident / SSD-precomputed dynamic length-bucketed batch generator."""
 
-    def __init__(self, shard_paths: list[str], batch_size: int = 160, max_frames: int = 1600):
+    def __init__(self, shard_paths: list[str], batch_size: int = 160, max_frames: int = 1200):
         self.records = []
         for sp in shard_paths:
             recs = torch.load(sp, map_location="cpu", weights_only=False)
             for r in recs:
+                # Strip non-acoustic prefix mode tokens (<= 7: <blk>, <unk>, <bos>, <eos>, <ne>, <sa>, <punct>, <nopunct>)
+                raw_t = r["tokens"]
+                spoken_t = raw_t[raw_t > 7]
                 T = r["mel"].size(0)
-                U = r["tokens"].numel()
-                if 16 <= T <= max_frames and 1 <= U <= (T // 8):
+                U = spoken_t.numel()
+                if 16 <= T <= max_frames and 1 <= U <= max(1, (T // 8) - 1):
+                    r["tokens"] = spoken_t
                     self.records.append(r)
         print(f"[Batcher] Loaded {len(self.records)} valid utterances into RAM.", flush=True)
-        # Sort by mel frame length for tight length bucketing (minimal padding waste)
+        # Group into coarse length buckets of 8,000 then shuffle inside each bucket for speaker/domain diversity
         self.records.sort(key=lambda r: r["mel"].size(0))
+        bucket_size = 8000
+        for b_start in range(0, len(self.records), bucket_size):
+            sub = self.records[b_start : b_start + bucket_size]
+            random.shuffle(sub)
+            self.records[b_start : b_start + bucket_size] = sub
         self.batches = []
         for i in range(0, len(self.records), batch_size):
             self.batches.append(self.records[i : i + batch_size])
@@ -292,7 +301,7 @@ def main():
             targets = targets.to(device, non_blocking=True)
             target_lens = target_lens.to(device, non_blocking=True)
 
-            mel_aug = apply_spec_and_mic_augment(mel, mel_lens)
+            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if step > 300 else mel
             c_frames = random.choice(chunk_choices)
 
             optimizer.zero_grad(set_to_none=True)
@@ -314,7 +323,10 @@ def main():
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
-            update_ema(ema_model, model, decay=0.997 if step < 2000 else 0.999)
+            if step <= 300:
+                ema_model.load_state_dict(model.state_dict())
+            else:
+                update_ema(ema_model, model, decay=0.992)
 
             # MANDATORY STEP-50 THROUGHPUT WATCHDOG GATE
             if step == 50:
