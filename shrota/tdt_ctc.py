@@ -118,13 +118,13 @@ class ShrotaASRModel(nn.Module):
 
     @classmethod
     def build_tiny(cls, vocab_size: int = 1024, dropout: float = 0.1) -> "ShrotaASRModel":
-        """Shrota-Tiny (~3.1M params -> ~3.4 MB int8 ONNX)."""
+        """Shrota-Tiny (~2.8M params -> <= 3.8 MB int8 ONNX)."""
         return cls(
             vocab_size=vocab_size,
-            d_model=144,
+            d_model=128,
             n_layers=8,
             n_heads=4,
-            d_ff=576,
+            d_ff=512,
             conv_kernel=9,
             left_ctx=64,
             dropout=dropout,

@@ -143,12 +143,11 @@ class CacheAwareCausalAttention(nn.Module):
         # attends to exactly [i .. i + L_ctx] in k_all (which is L_ctx past tokens + self)!
         # This guarantees 100% equivalence between chunked streaming (even T=1 or T=2)
         # and full-sequence execution!
-        if T > 1:
-            q_idx = torch.arange(T, device=x.device).unsqueeze(1)  # (T, 1)
-            k_idx = torch.arange(L_ctx + T, device=x.device).unsqueeze(0)  # (1, L_ctx + T)
-            # Valid keys for query q_idx are in [q_idx, q_idx + L_ctx]
-            invalid = (k_idx > (q_idx + L_ctx)) | (k_idx < q_idx)
-            scores = scores.masked_fill(invalid.unsqueeze(0).unsqueeze(0), -1e4)
+        q_idx = torch.arange(T, device=x.device).unsqueeze(1)  # (T, 1)
+        k_idx = torch.arange(L_ctx + T, device=x.device).unsqueeze(0)  # (1, L_ctx + T)
+        # Valid keys for query q_idx are in [q_idx, q_idx + L_ctx]
+        invalid = (k_idx > (q_idx + L_ctx)) | (k_idx < q_idx)
+        scores = scores.masked_fill(invalid.unsqueeze(0).unsqueeze(0), -1e4)
 
         attn = torch.softmax(scores, dim=-1)
         attn = self.drop(attn)

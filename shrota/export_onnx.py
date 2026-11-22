@@ -83,11 +83,11 @@ def verify_zero_conv_integer(onnx_path: str) -> dict:
 
 
 def quantize_matmul_int8(fp32_path: str, int8_path: str) -> dict:
-    """Quantize MatMul/Gemm weights to INT8 while keeping Conv in native FP32 (zero ConvInteger!)."""
+    """Quantize MatMul/Gemm/Gather weights to INT8 while keeping Conv in native FP32 (zero ConvInteger!)."""
     quantize_dynamic(
         model_input=fp32_path,
         model_output=int8_path,
-        op_types_to_quantize=["MatMul", "Gemm"],
+        op_types_to_quantize=["MatMul", "Gemm", "Gather"],
         weight_type=QuantType.QUInt8,
         per_channel=False,
     )
