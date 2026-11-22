@@ -142,15 +142,18 @@ def main():
                     chunk_frames=c_frames,
                 )
 
-                # KL-Divergence CTC logit distillation from frozen Shrota-Base
+                # Per-frame masked KL-Divergence CTC logit distillation from frozen Shrota-Base
                 T_min = min(t_ctc_logits.size(1), s_ctc_logits.size(1))
-                kd_loss = F.kl_div(
+                kd_per_frame = F.kl_div(
                     F.log_softmax(s_ctc_logits[:, :T_min, :].float() / temp, dim=-1),
                     F.softmax(t_ctc_logits[:, :T_min, :].float() / temp, dim=-1),
-                    reduction="batchmean",
-                ) * (temp * temp)
+                    reduction="none",
+                ).sum(dim=-1)
+                enc_lens = torch.clamp(mel_lens // 8, min=1, max=T_min)
+                f_mask = (torch.arange(T_min, device=mel.device).unsqueeze(0) < enc_lens.unsqueeze(1)).float()
+                kd_loss = ((kd_per_frame * f_mask).sum() / torch.clamp(f_mask.sum(), min=1.0)) * (temp * temp)
 
-                loss = 0.65 * gt_loss + 0.35 * kd_loss
+                loss = 0.60 * gt_loss + 0.40 * kd_loss
 
             if torch.isnan(loss) or torch.isinf(loss):
                 continue
