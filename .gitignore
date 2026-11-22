@@ -34,6 +34,7 @@ venv/
 *.mp3
 !docs/audio/*.wav
 !docs/audio/*.mp3
+!docs/samples/*.wav
 !docs/models/*.onnx
 !models/*.onnx
 logs/
