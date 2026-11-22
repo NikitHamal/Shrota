@@ -62,8 +62,11 @@ export function renderDownloads(metrics) {
   const files = [
     ["shrota_shuddha_int8.onnx", shud?.size_int8_mb, "models/shrota_shuddha_int8.onnx"],
     ["tokenizer.json", null, "models/tokenizer.json"],
-    ["shrota_base_encoder_int8.onnx", sizeOf("shrota_base", "shrota_base_shuddha"), `${REPO}/shrota_base_encoder_int8.onnx`],
-    ["shrota_tiny_encoder_int8.onnx", sizeOf("shrota_tiny", "shrota_tiny_shuddha"), `${REPO}/shrota_tiny_encoder_int8.onnx`],
+    ["shrota_base_encoder_int8.onnx", 13.0, "models/shrota_base_encoder_int8.onnx"],
+    ["shrota_base_decoder_int8.onnx", 0.7, "models/shrota_base_decoder_int8.onnx"],
+    ["shrota_tiny_encoder_int8.onnx", 3.2, "models/shrota_tiny_encoder_int8.onnx"],
+    ["shrota_tiny_decoder_int8.onnx", 0.3, "models/shrota_tiny_decoder_int8.onnx"],
+    ["shrota_*_best.pt (PyTorch checkpoints)", null, REPO.replace("/download/v1-ckpt", "")],
   ];
   $("download-list").innerHTML = files
     .map(([n, mb, href]) => `<a class="download-item" href="${href}" ${href.startsWith("http") ? 'target="_blank" rel="noopener"' : "download"}><span class="download-name mono">${n}</span>${mb ? `<span class="m3-chip">${mb} MB</span>` : ""}</a>`)

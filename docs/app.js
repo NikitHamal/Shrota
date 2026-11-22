@@ -45,7 +45,7 @@ async function boot() {
   initTabs();
   initCopy();
   const [metrics] = await Promise.all([loadMetrics(), loadLexicon()]);
-  initStudio(metrics);
+  initStudio();
   renderBenchmarks(metrics, "wer");
   initBenchmarkControls(metrics);
   renderShuddha(metrics);

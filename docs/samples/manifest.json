@@ -1,0 +1,84 @@
+{
+ "samples": [
+  {
+   "id": "fleurs_ne_01",
+   "title": "FLEURS test clip 1",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_01.wav",
+   "duration_s": 9.2,
+   "reference": "केहि मार्गहरूमा ठूला कम्पनीहरूका आफ्नै विमानहरू छन् तर अन्य मार्ग र साना फर्महरूका लागि समस्या थियो।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_02",
+   "title": "FLEURS test clip 2",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_02.wav",
+   "duration_s": 9.6,
+   "reference": "तिनीहरू चीनको आर्थिक उत्पादनमा आधारित रहेर बनाइने छन् भन्दै उनले कटौतीका लागि आँकडा निर्धारण गरेका छैनन्।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_03",
+   "title": "FLEURS test clip 3",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_03.wav",
+   "duration_s": 5.6,
+   "reference": "किट समूहका लागि बग शब्द औपचारिक अर्थमा प्रयोग गरिन्छ।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_04",
+   "title": "FLEURS test clip 4",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_04.wav",
+   "duration_s": 8.2,
+   "reference": "गाडीलाई नै त्यही दिन लगभग 1200 GMT मा दुर्घटना स्थलबाट टाढा लगिएको थियो।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_05",
+   "title": "FLEURS test clip 5",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_05.wav",
+   "duration_s": 6.9,
+   "reference": "ब्रह्माण्डमा सबै सामग्री पदार्थबाट बनेको हुन्छ। सबै कुरा परमाणु भनिने साना कणहरूद्वारा बनेको हुन्छ।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_06",
+   "title": "FLEURS test clip 6",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_06.wav",
+   "duration_s": 5.8,
+   "reference": "स्कीइङ मार्गलाई हाइकिङ मार्ग जस्तै समान रूपमा सोच्नुहोस्।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_07",
+   "title": "FLEURS test clip 7",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_07.wav",
+   "duration_s": 9.1,
+   "reference": "बहुप्रतिभाशाली खेलाडी, बाघले चढ्न (राम्रोसँग िनभए पनि), पौडी खेल्न, लामो दूरी उफ्रिन र एउटा शक्तिशाली मान्छेकोभन्दा पाँच गुणा बढी बलले तान्न सक्दछ।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  },
+  {
+   "id": "fleurs_ne_08",
+   "title": "FLEURS test clip 8",
+   "lang": "ne",
+   "domain": "eval_fleurs_ne_np",
+   "audio_url": "samples/fleurs_ne_08.wav",
+   "duration_s": 8.8,
+   "reference": "10:00-11:00 राती MDT का बिचमाबिचमा, बगैँचामा कैदीहरूले आगो लगाउन सुरु गरे।",
+   "source": "google/fleurs ne_np test (CC-BY-4.0), held out from training"
+  }
+ ]
+}

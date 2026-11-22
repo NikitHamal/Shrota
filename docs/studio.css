@@ -1,0 +1,55 @@
+/* Live studio additions. Same M3X tokens as styles.css: flat tonal surfaces, no gradients. */
+.card-hint { font-size: 12px; color: var(--on-variant); margin: -4px 0 12px; }
+.status-note { font-size: 12px; color: var(--on-variant); min-height: 0; }
+.status-note:empty { display: none; }
+
+.m3-chip.status-idle { background: var(--surface-container); color: var(--on-variant); }
+.m3-chip.status-busy { background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.m3-chip.status-ok { background: var(--secondary-container); color: var(--on-secondary-container); }
+.m3-chip.status-live { background: var(--primary); color: var(--on-primary); }
+.m3-chip.status-error { background: #FFDAD6; color: #410002; }
+.controls .m3-chip { align-self: center; }
+
+.input-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.mic-btn {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  font: inherit; font-weight: 600; font-size: 15px;
+  border: 0; cursor: pointer; min-height: 72px;
+  border-radius: var(--radius-lg);
+  background: var(--primary); color: var(--on-primary);
+}
+.mic-btn:hover { background: #741634; }
+.mic-btn.recording { background: var(--on-surface); color: var(--surface); }
+.mic-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--on-primary); }
+.mic-btn.recording .mic-dot { background: #FF5449; animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 50% { transform: scale(0.6); opacity: 0.6; } }
+
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 72px; padding: 12px; text-align: center; cursor: pointer;
+  border: 2px dashed var(--outline); border-radius: var(--radius-lg);
+  background: var(--surface-low); color: var(--on-surface);
+}
+.dropzone:hover, .dropzone.drag { background: var(--primary-container); border-color: var(--primary); }
+.dz-title { font-weight: 600; }
+.dz-sub { font-size: 12px; color: var(--on-variant); }
+
+.meter { height: 6px; border-radius: var(--radius-pill); background: var(--surface-container); overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: var(--primary); transition: width 80ms linear; }
+
+.placeholder { color: var(--outline); font-weight: 400; font-size: 16px; }
+.output-line .partial { color: var(--outline); font-weight: 400; }
+.output-line .commit { color: var(--on-surface); }
+
+.progress { height: 4px; border-radius: var(--radius-pill); background: var(--surface-container); overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--primary); transition: width 120ms linear; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.word-pill small { color: var(--on-variant); font-size: 11px; }
+.word-pill.active small { color: var(--on-primary); }
+
+.sample-play { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; color: var(--primary); }
+.play-icon { width: 0; height: 0; border-left: 9px solid var(--primary); border-top: 6px solid transparent; border-bottom: 6px solid transparent; }
+
+@media (max-width: 760px) {
+  .input-row { grid-template-columns: 1fr; }
+}

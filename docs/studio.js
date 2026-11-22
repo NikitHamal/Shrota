@@ -1,162 +1,331 @@
-// Studio tab: model/Shuddha controls, example list, transcript stage.
+// Studio tab controller: model/Shuddha controls, example clips with audio, file upload, live microphone.
 import { applyClientShuddha } from "./shuddha_client.js";
+import { getEngine } from "./asr/runtime.js";
+import { decodeToMono16k } from "./asr/audio.js";
+import { cleanSubwordStutter } from "./asr/text.js";
+import { scoreAgainst } from "./asr/metrics.js";
+import { LiveSession } from "./live.js";
+import { $, esc, diffHtml, pct } from "./view.js";
 
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-
-const MODEL_KEYS = {
-  base: ["shrota_base_shuddha", "shrota_base"],
-  tiny: ["shrota_tiny_shuddha", "shrota_tiny"],
+const st = {
+  model: "base",
+  shuddha: true,
+  samples: [],
+  item: null, // current clip: {title, pcm, audioUrl, reference, words, raw, done, busy, progress, score}
+  runId: 0,
+  live: null,
+  committed: [], // live mode: raw clauses
+  partial: "",
+  stats: { chunkMs: null, rtf: null, audioSec: null },
+  manifest: null,
 };
 
-export const studio = { metrics: null, items: [], current: null, model: "base", shuddha: true, timer: null };
+const MODEL_LABEL = { base: "Shrota-Base", tiny: "Shrota-Tiny" };
 
-function modelEntry(kind) {
-  const models = studio.metrics?.models || {};
-  for (const k of MODEL_KEYS[kind]) if (models[k]) return models[k];
-  return null;
+function setStatus(text, kind = "idle") {
+  const chip = $("status-chip");
+  chip.textContent = text;
+  chip.className = `m3-chip status-${kind}`;
 }
 
-function itemHasModel(item, kind) {
-  if (!item) return false;
-  return kind === "base" ? !!(item.base_raw || item.base_shuddha) : !!(item.tiny_raw || item.tiny_shuddha);
+function setNote(text) {
+  $("status-text").textContent = text || "";
 }
 
-function outputsFor(item, kind) {
-  const raw = (kind === "base" ? item.base_raw : item.tiny_raw) || item.base_raw || "";
-  const refined = (kind === "base" ? item.base_shuddha : item.tiny_shuddha) || applyClientShuddha(raw, true);
-  return { raw, refined };
-}
+// ---------- rendering ----------
 
-// Word-level LCS diff: returns html for `b` with words not present in `a` highlighted.
-function diffHtml(a, b) {
-  const x = a.split(/\s+/).filter(Boolean);
-  const y = b.split(/\s+/).filter(Boolean);
-  const dp = Array.from({ length: x.length + 1 }, () => new Array(y.length + 1).fill(0));
-  for (let i = x.length - 1; i >= 0; i--)
-    for (let j = y.length - 1; j >= 0; j--)
-      dp[i][j] = x[i] === y[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const out = [];
-  let i = 0, j = 0;
-  while (j < y.length) {
-    if (i < x.length && x[i] === y[j]) { out.push(esc(y[j])); i++; j++; }
-    else if (i < x.length && dp[i + 1][j] >= dp[i][j + 1]) { i++; }
-    else { out.push(`<span class="diff-add">${esc(y[j])}</span>`); j++; }
-  }
-  return out.join(" ");
+function refine(raw, final) {
+  return st.shuddha ? applyClientShuddha(raw, final) : raw;
 }
 
 function renderStats() {
-  const m = modelEntry(studio.model);
-  const row = $("stat-row");
-  if (!m) { row.innerHTML = ""; return; }
-  const rtf = m.cpu_1thread_rtf;
-  const stats = [
-    [`${Number(m.size_mb).toFixed(1)} MB`, "INT8 size"],
-    [rtf ? `${Math.round(1 / rtf)}x` : "-", `Real time, RTF ${rtf ?? "-"}`],
-    [m.latency_ms != null ? `${m.latency_ms} ms` : "-", "Chunk latency"],
-    [`${m.chunk_ms || 160} ms`, "Chunk size"],
+  const cfg = st.manifest?.models?.[st.model];
+  const s = st.stats;
+  const cells = [
+    [cfg?.size_mb ? `${cfg.size_mb} MB` : "-", "INT8 model size"],
+    [s.chunkMs != null ? `${s.chunkMs.toFixed(0)} ms` : "-", "Compute per chunk"],
+    [s.rtf ? `${(1 / s.rtf).toFixed(0)}x` : "-", s.rtf ? `Real time (RTF ${s.rtf.toFixed(3)})` : "Real time"],
+    [s.audioSec != null ? `${s.audioSec.toFixed(1)} s` : "-", "Audio duration"],
   ];
-  row.innerHTML = stats.map(([v, l]) => `<div class="stat"><div class="stat-value">${v}</div><div class="stat-label">${l}</div></div>`).join("");
+  $("stat-row").innerHTML = cells
+    .map(([v, l]) => `<div class="stat"><div class="stat-value">${v}</div><div class="stat-label">${l}</div></div>`)
+    .join("");
 }
 
 function renderModelSelector() {
-  const wrap = $("model-selector");
-  const avail = ["base", "tiny"].filter((k) => modelEntry(k));
-  wrap.innerHTML = ["base", "tiny"]
-    .map((k) => {
-      const m = modelEntry(k);
-      const label = k === "base" ? "Shrota-Base" : "Shrota-Tiny";
-      const disabled = !m || !itemHasModel(studio.current, k);
-      return `<button class="seg-btn${studio.model === k ? " active" : ""}" data-model="${k}" ${disabled ? "disabled" : ""}>${label}</button>`;
-    })
+  const models = st.manifest?.models || { base: {}, tiny: {} };
+  $("model-selector").innerHTML = Object.keys(models)
+    .map((k) => `<button class="seg-btn${st.model === k ? " active" : ""}" data-model="${k}">${MODEL_LABEL[k] || k}</button>`)
     .join("");
-  if (!avail.includes(studio.model) && avail.length) studio.model = avail[0];
-  wrap.querySelectorAll(".seg-btn").forEach((b) =>
-    b.addEventListener("click", () => {
-      studio.model = b.dataset.model;
-      renderModelSelector();
-      renderStats();
-      renderStage();
-    })
+  $("model-selector").querySelectorAll(".seg-btn").forEach((b) =>
+    b.addEventListener("click", () => switchModel(b.dataset.model))
   );
 }
 
-export function renderStage() {
-  clearInterval(studio.timer);
-  const item = studio.current;
-  if (!item) return;
-  const { raw, refined } = outputsFor(item, studio.model);
-  const shown = studio.shuddha ? refined : raw;
-  $("out-text").innerHTML = studio.shuddha ? diffHtml(raw, shown) : esc(raw);
-  $("raw-text").textContent = raw;
-  $("ref-text").textContent = item.reference || "";
+function audioPlaying() {
+  const a = $("studio-audio");
+  return !a.hidden && !a.paused && !a.ended;
+}
 
-  const words = item.words || [];
+function renderClip() {
+  const it = st.item;
+  if (!it) return;
+  const playing = audioPlaying();
+  const t = $("studio-audio").currentTime;
+  const words = it.words || [];
+  const visible = playing ? words.filter((w) => w.t0 <= t) : words;
+  const rawVisible = playing || !it.done ? cleanSubwordStutter(visible.map((w) => w.word).join(" ")) : it.raw;
+  const final = !playing && it.done;
+  const refined = refine(rawVisible, final);
+  $("out-text").innerHTML = rawVisible ? (st.shuddha ? diffHtml(rawVisible, refined) : esc(rawVisible)) : `<span class="placeholder">${it.busy ? "Transcribing..." : ""}</span>`;
+  $("raw-text").textContent = rawVisible;
+  $("ref-block").hidden = !it.reference;
+  $("ref-text").textContent = it.reference || "";
+  const sc = $("score-chips");
+  if (it.done && it.reference && it.score) {
+    sc.hidden = false;
+    sc.innerHTML = [
+      `<span class="m3-chip">Raw WER ${pct(it.score.raw.wer)} · CER ${pct(it.score.raw.cer)}</span>`,
+      `<span class="m3-chip secondary">Shuddha WER ${pct(it.score.shuddha.wer)} · CER ${pct(it.score.shuddha.cer)}</span>`,
+    ].join("");
+  } else sc.hidden = true;
   $("words-block").hidden = words.length === 0;
-  $("word-timestamps").innerHTML = words.map((w, i) => `<span class="word-pill" id="wp-${i}">${esc(w.word)} ${w.t0.toFixed(2)}s</span>`).join("");
-
-  const audio = $("studio-audio");
-  audio.hidden = !item.audio_url;
-  if (item.audio_url && !audio.src.endsWith(item.audio_url)) audio.src = item.audio_url;
+  $("word-timestamps").innerHTML = words
+    .map((w, i) => `<span class="word-pill${playing && t >= w.t0 && t < w.t1 + 0.25 ? " active" : ""}" data-i="${i}">${esc(w.word)} <small>${w.t0.toFixed(2)}s</small></span>`)
+    .join("");
+  $("progress").hidden = !it.busy;
+  $("progress-bar").style.width = `${Math.round((it.progress || 0) * 100)}%`;
 }
 
-function syncWords() {
-  const audio = $("studio-audio");
-  const words = studio.current?.words || [];
-  audio.ontimeupdate = () => {
-    const t = audio.currentTime;
-    words.forEach((w, i) => $(`wp-${i}`)?.classList.toggle("active", t >= w.t0 && t < w.t1));
-  };
+function renderLive() {
+  const lines = st.committed.map((raw) => `<span class="commit">${esc(refine(raw, true))}</span>`);
+  if (st.partial) lines.push(`<span class="partial">${esc(st.partial)}</span>`);
+  $("out-text").innerHTML = lines.length ? lines.join(" ") : `<span class="placeholder">${st.live ? "Listening... speak Nepali" : ""}</span>`;
+  $("raw-text").textContent = [...st.committed, st.partial].filter(Boolean).join(" ");
+  $("ref-block").hidden = true;
+  $("score-chips").hidden = true;
+  $("words-block").hidden = true;
+  $("progress").hidden = true;
 }
 
-export function selectItem(item) {
-  studio.current = item;
-  if (!itemHasModel(item, studio.model)) studio.model = "base";
-  document.querySelectorAll(".sample-item").forEach((el) => el.classList.toggle("active", el.dataset.id === item.id));
-  renderModelSelector();
+function render() {
   renderStats();
-  renderStage();
-  syncWords();
+  if (st.live) renderLive();
+  else if (st.item) renderClip();
 }
 
-function renderList() {
-  const list = $("sample-deck-list");
-  if (!studio.items.length) {
-    list.innerHTML = `<div class="empty-state">No examples yet</div>`;
-    return;
+function tick() {
+  if (audioPlaying() && st.item && !st.live) renderClip();
+  requestAnimationFrame(tick);
+}
+
+// ---------- model + transcription ----------
+
+async function ensureModel(key) {
+  const engine = await getEngine();
+  if (!st.manifest) { st.manifest = engine.manifest; renderModelSelector(); }
+  if (!engine.sessions[key]) {
+    setStatus("Loading model", "busy");
+    setNote(`Downloading ${MODEL_LABEL[key]} (${engine.manifest.models[key].size_mb} MB) and starting the WebAssembly runtime...`);
+    await engine.loadModel(key);
+    setNote("");
   }
-  list.innerHTML = studio.items
-    .map((s) => {
-      const meta = [s.lang === "sa" ? "Sanskrit" : "Nepali", s.duration_s ? `${s.duration_s}s` : null].filter(Boolean).join(" · ");
-      return `<div class="sample-item" data-id="${esc(s.id)}" tabindex="0" role="button">
-        <div class="sample-head"><span>${esc(s.title)}</span><span class="m3-chip ${s.lang === "sa" ? "tertiary" : "secondary"}">${meta}</span></div>
-        <div class="sample-preview deva">${esc(s.reference || "")}</div>
-      </div>`;
-    })
+  return engine;
+}
+
+async function transcribeItem(item) {
+  const run = ++st.runId;
+  item.words = []; item.raw = ""; item.done = false; item.busy = true; item.progress = 0; item.score = null;
+  render();
+  try {
+    const engine = await ensureModel(st.model);
+    if (run !== st.runId) return;
+    setStatus("Transcribing", "busy");
+    const stream = engine.createStream(st.model, { lang: "ne", chunkFrames: 16 });
+    const step = 16000;
+    for (let i = 0; i < item.pcm.length; i += step) {
+      await stream.feed(item.pcm.subarray(i, Math.min(item.pcm.length, i + step)));
+      if (run !== st.runId) return;
+      item.words = stream.words();
+      item.progress = Math.min(1, (i + step) / item.pcm.length);
+      st.stats = { chunkMs: stream.lastChunkMs, rtf: stream.audioSec ? stream.computeMs / 1000 / stream.audioSec : 0, audioSec: stream.audioSec };
+      render();
+    }
+    await stream.flush();
+    if (run !== st.runId) return;
+    const res = stream.result();
+    item.words = res.words; item.raw = res.raw; item.done = true; item.busy = false;
+    st.stats = { chunkMs: stream.lastChunkMs, rtf: res.rtf, audioSec: res.audioSec };
+    if (item.reference) {
+      item.score = { raw: scoreAgainst(item.reference, res.raw), shuddha: scoreAgainst(item.reference, applyClientShuddha(res.raw, true)) };
+    }
+    setStatus("Ready", "ok");
+    render();
+  } catch (err) {
+    item.busy = false;
+    console.error(err);
+    setStatus("Error", "error");
+    setNote(String(err.message || err));
+    render();
+  }
+}
+
+async function switchModel(key) {
+  if (key === st.model) return;
+  if (st.live) await stopLive();
+  st.model = key;
+  renderModelSelector();
+  if (st.item?.pcm) transcribeItem(st.item);
+  else ensureModel(key).then(() => setStatus("Ready", "ok")).catch(showError);
+}
+
+function showError(err) {
+  console.error(err);
+  setStatus("Error", "error");
+  setNote(String(err.message || err));
+}
+
+// ---------- inputs: samples, files, microphone ----------
+
+function attachAudio(url) {
+  const a = $("studio-audio");
+  a.hidden = false;
+  if (a.dataset.src !== url) { a.src = url; a.dataset.src = url; }
+  return a;
+}
+
+async function loadSample(sample, play = true) {
+  if (st.live) await stopLive();
+  document.querySelectorAll(".sample-item").forEach((el) => el.classList.toggle("active", el.dataset.id === sample.id));
+  const audio = attachAudio(sample.audio_url);
+  audio.currentTime = 0;
+  if (play) audio.play().catch(() => {});
+  const item = { title: sample.title, reference: sample.reference, pcm: null, words: [], busy: true, done: false, progress: 0 };
+  st.item = item;
+  render();
+  try {
+    const buf = await (await fetch(new URL(sample.audio_url, document.baseURI))).arrayBuffer();
+    item.pcm = await decodeToMono16k(buf);
+    if (st.item !== item) return;
+    await transcribeItem(item);
+  } catch (err) { showError(err); }
+}
+
+async function loadFile(file) {
+  if (!file) return;
+  if (st.live) await stopLive();
+  document.querySelectorAll(".sample-item").forEach((el) => el.classList.remove("active"));
+  const audio = attachAudio(URL.createObjectURL(file));
+  audio.currentTime = 0;
+  const item = { title: file.name, reference: "", pcm: null, words: [], busy: true, done: false, progress: 0 };
+  st.item = item;
+  setStatus("Decoding audio", "busy");
+  render();
+  try {
+    item.pcm = await decodeToMono16k(await file.arrayBuffer());
+    await transcribeItem(item);
+    audio.play().catch(() => {});
+  } catch (err) {
+    item.busy = false;
+    showError(new Error(`Could not decode "${file.name}". Try WAV, MP3, M4A or OGG. (${err.message || err})`));
+  }
+}
+
+async function startLive() {
+  st.runId++;
+  $("studio-audio").pause();
+  st.item = null;
+  st.committed = []; st.partial = "";
+  st.stats = { chunkMs: null, rtf: null, audioSec: null };
+  try {
+    const engine = await ensureModel(st.model);
+    const live = new LiveSession({
+      engine, modelKey: st.model,
+      ui: {
+        onPartial: (t) => { st.partial = t; renderLive(); },
+        onCommit: (raw) => { st.committed.push(raw); renderLive(); },
+        onStats: (s) => { st.stats = s; renderStats(); if (s.backlogSec > 2) setNote("Running behind real time. Try Shrota-Tiny."); },
+        onLevel: (lv) => { $("mic-level").style.width = `${Math.min(100, Math.round(Math.sqrt(lv) * 130))}%`; },
+        onError: (e) => showError(e),
+      },
+    });
+    st.live = live;
+    $("btn-mic").classList.add("recording");
+    $("mic-label").textContent = "Stop";
+    setStatus("Listening", "live");
+    renderLive();
+    await live.start();
+  } catch (err) {
+    st.live = null;
+    $("btn-mic").classList.remove("recording");
+    $("mic-label").textContent = "Start speaking";
+    const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+    showError(denied ? new Error("Microphone permission was denied. Allow microphone access for this site and try again.") : err);
+  }
+}
+
+async function stopLive() {
+  const live = st.live;
+  if (!live) return;
+  st.live = null;
+  $("btn-mic").classList.remove("recording");
+  $("mic-label").textContent = "Start speaking";
+  $("mic-level").style.width = "0%";
+  setStatus("Finishing", "busy");
+  try { await live.stop(); } catch (e) { console.error(e); }
+  setStatus("Ready", "ok");
+  renderLive();
+}
+
+// ---------- init ----------
+
+function renderSamples() {
+  const list = $("sample-deck-list");
+  if (!st.samples.length) { list.innerHTML = `<div class="empty-state">No example clips found</div>`; return; }
+  list.innerHTML = st.samples
+    .map((s) => `<div class="sample-item" data-id="${esc(s.id)}" tabindex="0" role="button">
+      <div class="sample-head"><span>${esc(s.title)}</span><span class="m3-chip secondary">${s.lang === "sa" ? "Sanskrit" : "Nepali"} · ${s.duration_s}s</span></div>
+      <div class="sample-preview deva">${esc(s.reference || "")}</div>
+      <div class="sample-play"><span class="play-icon" aria-hidden="true"></span>Play and transcribe</div>
+    </div>`)
     .join("");
   list.querySelectorAll(".sample-item").forEach((el) => {
-    const go = () => {
-      const item = studio.items.find((s) => s.id === el.dataset.id);
-      selectItem(item);
-      if (item.audio_url) $("studio-audio").play().catch(() => {});
-    };
+    const go = () => loadSample(st.samples.find((s) => s.id === el.dataset.id));
     el.addEventListener("click", go);
     el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
   });
 }
 
-export function initStudio(metrics) {
-  studio.metrics = metrics;
-  studio.items = metrics?.samples?.length ? metrics.samples : metrics?.examples || [];
+function initInputs() {
+  $("btn-mic").addEventListener("click", () => (st.live ? stopLive() : startLive()));
+  const input = $("file-input");
+  input.addEventListener("change", () => { loadFile(input.files[0]); input.value = ""; });
+  const dz = $("dropzone");
+  ["dragenter", "dragover"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
+  ["dragleave", "drop"].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
+  dz.addEventListener("drop", (e) => loadFile(e.dataTransfer.files[0]));
   document.querySelectorAll("#shuddha-selector .seg-btn").forEach((b) =>
     b.addEventListener("click", () => {
       document.querySelectorAll("#shuddha-selector .seg-btn").forEach((x) => x.classList.toggle("active", x === b));
-      studio.shuddha = b.dataset.shuddha === "on";
-      renderStage();
+      st.shuddha = b.dataset.shuddha === "on";
+      render();
     })
   );
-  renderList();
-  if (studio.items.length) selectItem(studio.items[0]);
-  else { renderModelSelector(); renderStats(); }
+  const audio = $("studio-audio");
+  ["play", "pause", "ended", "seeked"].forEach((ev) => audio.addEventListener(ev, () => st.item && !st.live && renderClip()));
+}
+
+export async function initStudio() {
+  initInputs();
+  renderModelSelector();
+  renderStats();
+  setStatus("Idle", "idle");
+  try {
+    const m = await (await fetch(new URL("samples/manifest.json", document.baseURI), { cache: "no-cache" })).json();
+    st.samples = m.samples || [];
+  } catch (_) { st.samples = []; }
+  renderSamples();
+  requestAnimationFrame(tick);
+  // Warm the runtime and the default model in the background so the first click is fast.
+  ensureModel(st.model).then(() => { setStatus("Ready", "ok"); setNote(""); }).catch(showError);
 }

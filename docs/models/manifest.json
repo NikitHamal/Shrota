@@ -1,0 +1,30 @@
+{
+  "tokenizer": "models/tokenizer.json",
+  "cmvn": "models/cmvn.json",
+  "models": {
+    "base": {
+      "label": "Shrota-Base",
+      "encoder": "models/shrota_base_encoder_int8.onnx",
+      "decoder": "models/shrota_base_decoder_int8.onnx",
+      "d_model": 256,
+      "n_layers": 12,
+      "n_heads": 4,
+      "head_dim": 64,
+      "left_ctx": 64,
+      "conv_cache": 8,
+      "size_mb": 13.6
+    },
+    "tiny": {
+      "label": "Shrota-Tiny",
+      "encoder": "models/shrota_tiny_encoder_int8.onnx",
+      "decoder": "models/shrota_tiny_decoder_int8.onnx",
+      "d_model": 128,
+      "n_layers": 8,
+      "n_heads": 4,
+      "head_dim": 32,
+      "left_ctx": 64,
+      "conv_cache": 8,
+      "size_mb": 3.5
+    }
+  }
+}
