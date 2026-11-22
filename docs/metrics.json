@@ -1,0 +1,163 @@
+{
+  "generated_at": "2026-11-22 11:38:56 UTC",
+  "models": {
+    "shrota_base": {
+      "name": "Shrota-Base",
+      "params_m": 13.24,
+      "size_mb": 13.637,
+      "streaming": true,
+      "chunk_ms": 160,
+      "latency_ms": 2.34,
+      "cpu_1thread_rtf": 0.0146,
+      "domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 77.63,
+          "cer": 39.25,
+          "punct_f1": 50.75,
+          "num_utts": 725
+        },
+        "eval_slr54_gold": {
+          "wer": 71.93,
+          "cer": 38.87,
+          "punct_f1": 0.0,
+          "num_utts": 484
+        },
+        "eval_conv_story": {
+          "wer": 86.08,
+          "cer": 37.2,
+          "punct_f1": 60.68,
+          "num_utts": 300
+        },
+        "eval_vedic_gold": {
+          "wer": 92.39,
+          "cer": 26.73,
+          "punct_f1": 80.0,
+          "num_utts": 200
+        }
+      }
+    },
+    "whisper_small": {
+      "model": "openai/whisper-small",
+      "params_m": 241.7,
+      "size_mb": 483.4,
+      "streaming": false,
+      "latency_ms": 1850,
+      "cpu_1thread_rtf": 0.735,
+      "domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 103.41,
+          "cer": 63.64,
+          "punct_f1": 13.15,
+          "num_utts": 725
+        },
+        "eval_slr54_gold": {
+          "wer": 244.58,
+          "cer": 108.72,
+          "punct_f1": 30.77,
+          "num_utts": 484
+        },
+        "eval_conv_story": {
+          "wer": 90.33,
+          "cer": 52.41,
+          "punct_f1": 12.63,
+          "num_utts": 300
+        },
+        "eval_vedic_gold": {
+          "wer": 121.96,
+          "cer": 59.26,
+          "punct_f1": 0.0,
+          "num_utts": 200
+        }
+      }
+    },
+    "mms_1b_npi": {
+      "model": "facebook/mms-1b-all (npi)",
+      "params_m": 965.5,
+      "size_mb": 1931.0,
+      "streaming": false,
+      "latency_ms": 940,
+      "cpu_1thread_rtf": 0.78,
+      "domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 31.31,
+          "cer": 8.95,
+          "punct_f1": 2.87,
+          "num_utts": 725
+        },
+        "eval_slr54_gold": {
+          "wer": 73.56,
+          "cer": 33.67,
+          "punct_f1": 0.0,
+          "num_utts": 484
+        },
+        "eval_conv_story": {
+          "wer": 73.93,
+          "cer": 23.39,
+          "punct_f1": 0.63,
+          "num_utts": 300
+        },
+        "eval_vedic_gold": {
+          "wer": 115.27,
+          "cer": 72.58,
+          "punct_f1": 0.0,
+          "num_utts": 200
+        }
+      }
+    }
+  },
+  "shuddha": {
+    "model": "Shrota-Shuddha",
+    "params_m": 1.59,
+    "size_int8_mb": 1.807,
+    "clause_latency_ms": 0.54,
+    "before_shuddha": {
+      "wer": 30.31,
+      "cer": 1.46,
+      "punct_f1": 0.0,
+      "num_utts": 725,
+      "hraswa_dirgha_acc": 76.14
+    },
+    "after_shuddha": {
+      "wer": 19.32,
+      "cer": 1.68,
+      "punct_f1": 59.06,
+      "num_utts": 725,
+      "hraswa_dirgha_acc": 85.59
+    }
+  },
+  "examples": [
+    {
+      "id": "eval_fleurs_ne_np",
+      "title": "FLEURS news read speech",
+      "domain": "eval_fleurs_ne_np",
+      "lang": "ne",
+      "reference": "यद्यपि, संचार च्यानलहरू ढिला हुनाले, पश्चिममा शैलीहरू 25 देखि 30 वर्ष पछि रहन सक्दछन्।",
+      "base_raw": "से्पि संसाराहरू भला हुनउने पश्चिममा सरगहरू पक्षदेखि सपपछि हुनसकदछन।"
+    },
+    {
+      "id": "eval_slr54_gold",
+      "title": "OpenSLR 54 unseen speakers",
+      "domain": "eval_slr54_gold",
+      "lang": "ne",
+      "reference": "०३१ सालमा पञ्चायती",
+      "base_raw": "एक ३ सा पचायती"
+    },
+    {
+      "id": "eval_conv_story",
+      "title": "Conversation and storytelling",
+      "domain": "eval_conv_story",
+      "lang": "ne",
+      "reference": "नमस्ते स्वागत छ हिमाली सोरहरूमा नेपालीमन र नेपालीपन सँग नजेक।",
+      "base_raw": "नमस्ते स्वागत छ हिमाली सोरहरुमा नेपालीमन र नेपालीपन सँगनजेक।"
+    },
+    {
+      "id": "eval_vedic_gold",
+      "title": "Vedic verse",
+      "domain": "eval_vedic_gold",
+      "lang": "sa",
+      "reference": "अवन श्रीपतिरप्रतिरधिकेशादिभवादे करुणापूर्ण वरप्रद चरितं ज्ञापय मे ते",
+      "base_raw": "अवः श्रीपतिप्रतिधिकेषादिभावादे करुणापूर्ण वरप्रद चरितं ज्ापय मे ते"
+    }
+  ],
+  "samples": []
+}

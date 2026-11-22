@@ -3,153 +3,87 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shrota (श्रोता) v1 — Ultra-Tiny Real-Time Streaming Nepali + Sanskrit ASR</title>
+  <title>Shrota — Nepali and Sanskrit speech recognition</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=Noto+Sans+Devanagari:wght@400;600&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 </head>
 <body>
-  <div class="app-shell">
-    <!-- Top M3X Header -->
-    <header class="top-bar">
-      <div class="brand-group">
-        <div class="brand-mark deva">श्रो</div>
-        <div>
-          <h1 class="brand-title">Shrota (श्रोता) v1</h1>
-          <p class="brand-subtitle">100% From-Scratch Cache-Aware Streaming FastConformer + Stateless TDT/CTC &amp; Shrota-Shuddha Refiner</p>
-        </div>
-      </div>
-      <div class="badge-row">
-        <span class="m3-chip primary" id="badge-model">Shrota-Tiny (3.5 MB INT8)</span>
-        <span class="m3-chip secondary" id="badge-rtf">1-Thread RTF: 0.019 (52x RT)</span>
-        <span class="m3-chip tertiary" id="badge-chunk">160 ms Streaming Chunk</span>
-        <span class="m3-chip">Zero ConvInteger Ops</span>
-      </div>
-    </header>
-
-    <!-- M3X Pill Navigation -->
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-mark deva">श्रो</span>
+      <span class="brand-title">Shrota</span>
+    </div>
     <nav class="nav-tabs" role="tablist">
-      <button class="tab-btn active" data-tab="tab-studio" role="tab">1. Live Streaming Studio (Mic &amp; Samples)</button>
-      <button class="tab-btn" data-tab="tab-benchmarks" role="tab">2. 4-Domain Gold Benchmarks &amp; Proof</button>
-      <button class="tab-btn" data-tab="tab-integration" role="tab">3. Android &amp; Desktop Integration Kit</button>
+      <button class="tab-btn active" data-tab="tab-studio" role="tab">Studio</button>
+      <button class="tab-btn" data-tab="tab-benchmarks" role="tab">Benchmarks</button>
+      <button class="tab-btn" data-tab="tab-integration" role="tab">Integrate</button>
     </nav>
+  </header>
 
-    <!-- TAB 1: LIVE STREAMING STUDIO -->
+  <main class="page">
     <section id="tab-studio" class="tab-panel active">
       <div class="studio-grid">
-        <div>
-          <div class="m3-card">
-            <div class="card-header">
-              <h2 class="card-title">Real-Time 16 kHz Streaming Transcription</h2>
-              <div class="badge-row">
-                <span class="m3-chip mono" id="live-latency-badge">Latency: 3.4 ms</span>
-                <span class="m3-chip mono" id="live-rtf-badge">RTF: 0.019</span>
-                <span class="m3-chip mono" id="live-dur-badge">Dur: 0.0s</span>
-              </div>
+        <div class="stack">
+          <div class="controls">
+            <div class="seg-group" id="model-selector" aria-label="Acoustic model"></div>
+            <div class="seg-group" id="shuddha-selector" aria-label="Shuddha refiner">
+              <button class="seg-btn active" data-shuddha="on">Shuddha on</button>
+              <button class="seg-btn" data-shuddha="off">Shuddha off</button>
             </div>
+          </div>
 
-            <!-- Model & Shuddha Controls -->
-            <div class="control-bar">
-              <div>
-                <span style="font-size:12px;font-weight:600;margin-right:6px;">Acoustic Model:</span>
-                <div class="seg-group" id="model-selector">
-                  <button class="seg-btn active" data-model="tiny">Shrota-Tiny (&le;3.6 MB)</button>
-                  <button class="seg-btn" data-model="base">Shrota-Base (&le;11.8 MB)</button>
-                </div>
-              </div>
-              <div>
-                <span style="font-size:12px;font-weight:600;margin-right:6px;">Shrota-Shuddha Grammar:</span>
-                <div class="seg-group" id="shuddha-selector">
-                  <button class="seg-btn active" data-shuddha="on">ON (Hraswa-Dirgha + Punct)</button>
-                  <button class="seg-btn" data-shuddha="off">OFF (Raw Acoustic)</button>
-                </div>
-              </div>
+          <div class="stat-row" id="stat-row"></div>
+
+          <div class="m3-card transcript-card">
+            <div class="transcript-block">
+              <div class="label">Output</div>
+              <div class="output-line deva" id="out-text">Select an example</div>
             </div>
-
-            <!-- Mic & File Upload Actions -->
-            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:18px;align-items:center;">
-              <button class="action-btn" id="btn-mic">Start Live 16kHz Mic</button>
-              <label class="action-btn secondary" style="cursor:pointer;">
-                Drop / Upload Audio (.wav/.mp3/.flac)
-                <input type="file" id="file-input" accept="audio/*" style="display:none;" />
+            <div class="transcript-block">
+              <div class="label">Raw model output</div>
+              <div class="muted-line deva" id="raw-text"></div>
+            </div>
+            <div class="transcript-block">
+              <div class="label">Reference</div>
+              <div class="muted-line deva" id="ref-text"></div>
+            </div>
+            <div class="transcript-block" id="words-block" hidden>
+              <div class="label">Words</div>
+              <div id="word-timestamps" class="deva"></div>
+            </div>
+            <audio id="studio-audio" controls hidden></audio>
+            <div class="action-row">
+              <button class="action-btn" id="btn-mic" disabled title="Browser decoding ships with the encoder ONNX export">Microphone</button>
+              <label class="action-btn tonal disabled" title="Browser decoding ships with the encoder ONNX export">
+                Audio file
+                <input type="file" id="file-input" accept="audio/*" disabled hidden />
               </label>
-              <button class="action-btn secondary" id="btn-replay">Stream Selected Sample</button>
-              <audio id="studio-audio" controls style="height:40px;flex:1;min-width:220px;"></audio>
-            </div>
-
-            <!-- Live Streaming Transcript Stage -->
-            <div class="transcript-stage">
-              <div style="font-size:12px;font-weight:600;color:var(--m3-on-surface-variant);margin-bottom:4px;">
-                LIVE 160ms STREAMING PARTIAL (RAW ACOUSTIC):
-              </div>
-              <div class="partial-line deva" id="live-partial-text">Ready to stream 16 kHz audio chunks...</div>
-
-              <div style="font-size:12px;font-weight:600;color:var(--m3-secondary);margin-top:12px;margin-bottom:4px;">
-                COMMITTED TRANSCRIPT (SHROTA-SHUDDHA GRAMMATICAL &amp; HRASWA-DIRGHA POLISH):
-              </div>
-              <div class="committed-line deva" id="live-committed-text"></div>
-
-              <div class="diff-box" id="diff-comparison-box">
-                <div><strong>Raw Acoustic Preview:</strong> <span class="deva" id="raw-acoustic-preview"></span></div>
-                <div style="margin-top:4px;"><strong>Human Gold Reference:</strong> <span class="deva" id="gold-ref-preview"></span></div>
-              </div>
-            </div>
-
-            <!-- Word-Level Forced Alignment Timestamps -->
-            <div>
-              <div style="font-size:13px;font-weight:600;margin-bottom:8px;">
-                Word-Level CTC/TDT Forced-Alignment Timestamps:
-              </div>
-              <div id="word-timestamps-container" class="deva"></div>
             </div>
           </div>
         </div>
 
-        <!-- Right Column: Curated 10-Clip Real Nepali & Sanskrit Deck -->
-        <div>
-          <div class="m3-card">
-            <div class="card-header">
-              <h2 class="card-title">Curated Real Nepali &amp; Sanskrit Deck</h2>
-              <span class="m3-chip primary" id="sample-count-badge">10 Gold Clips</span>
-            </div>
-            <p style="font-size:13px;color:var(--m3-on-surface-variant);margin-bottom:14px;">
-              Click any clip to stream in 160 ms chunks with synced word timestamps and compare Shrota-Tiny, Shrota-Base, and Shrota-Shuddha.
-            </p>
-            <div class="sample-list" id="sample-deck-list"></div>
-          </div>
-        </div>
+        <aside class="m3-card">
+          <h2 class="card-title">Examples</h2>
+          <div class="sample-list" id="sample-deck-list"></div>
+        </aside>
       </div>
     </section>
 
-    <!-- TAB 2: 4-DOMAIN BENCHMARKS & HEAD-TO-HEAD PROOF -->
     <section id="tab-benchmarks" class="tab-panel">
       <div class="m3-card">
         <div class="card-header">
-          <h2 class="card-title">Head-to-Head Evaluation on 4 Frozen Human Gold Benchmarks</h2>
-          <span class="m3-chip secondary">100% From-Scratch Sovereign Weights</span>
+          <h2 class="card-title">Gold evaluation</h2>
+          <div class="seg-group" id="metric-selector">
+            <button class="seg-btn active" data-metric="wer">WER</button>
+            <button class="seg-btn" data-metric="cer">CER</button>
+          </div>
         </div>
-        <p style="font-size:13.5px;color:var(--m3-on-surface-variant);margin-bottom:18px;">
-          Evaluated strictly on unseen speakers and held-out gold references: <strong>Google FLEURS ne_np (test)</strong>,
-          <strong>OpenSLR SLR54 (500-utt unseen speaker holdout)</strong>, <strong>Spontaneous Conversational &amp; Storytelling Nepali</strong>,
-          and <strong>Vedic Sanskrit Verse Chants</strong>.
-        </p>
         <div class="table-wrap">
-          <table class="m3-table" id="benchmark-main-table">
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Size (MB)</th>
-                <th>Streaming</th>
-                <th>1-Thread CPU RTF</th>
-                <th>FLEURS ne_np (WER / CER)</th>
-                <th>SLR54 Unseen (WER / CER)</th>
-                <th>Conv &amp; Story (WER / CER)</th>
-                <th>Vedic Sanskrit (WER / CER)</th>
-                <th>Punct F1</th>
-              </tr>
-            </thead>
+          <table class="m3-table">
+            <thead id="benchmark-thead"></thead>
             <tbody id="benchmark-tbody"></tbody>
           </table>
         </div>
@@ -157,20 +91,13 @@
 
       <div class="m3-card">
         <div class="card-header">
-          <h2 class="card-title">Breakthrough 2: Shrota-Shuddha (&lt;2.5 MB) Grammar, Hraswa-Dirgha &amp; Punctuation Ablation</h2>
-          <span class="m3-chip primary" id="shuddha-latency-chip">&lt; 5 ms / clause on 1 CPU thread</span>
+          <h2 class="card-title">Shuddha on synthetic errors</h2>
+          <span class="m3-chip mono" id="shuddha-chip"></span>
         </div>
         <div class="table-wrap">
           <table class="m3-table">
             <thead>
-              <tr>
-                <th>Pipeline Stage</th>
-                <th>FLEURS ne_np WER (%)</th>
-                <th>FLEURS ne_np CER (%)</th>
-                <th>Hraswa-Dirgha Exact-Match (%)</th>
-                <th>Punctuation F1 (%)</th>
-                <th>Hallucinated Words</th>
-              </tr>
+              <tr><th>Input</th><th>WER</th><th>CER</th><th>Hraswa-dirgha</th><th>Punct F1</th></tr>
             </thead>
             <tbody id="shuddha-ablation-tbody"></tbody>
           </table>
@@ -178,61 +105,59 @@
       </div>
     </section>
 
-    <!-- TAB 3: ANDROID & DESKTOP INTEGRATION GUIDE -->
     <section id="tab-integration" class="tab-panel">
       <div class="m3-card">
         <div class="card-header">
-          <h2 class="card-title">Direct ONNX Opset 17 Model Downloads (Zero ConvInteger)</h2>
-          <a class="action-btn" href="https://github.com/NikitHamal/Shrota/releases" target="_blank" rel="noopener">GitHub Releases (v1-ckpt / v1.0.0)</a>
+          <h2 class="card-title">Models</h2>
+          <a class="action-btn tonal" href="https://github.com/NikitHamal/Shrota/releases" target="_blank" rel="noopener">Releases</a>
         </div>
-        <div class="badge-row" style="margin-bottom:16px;">
-          <a class="m3-chip primary" href="models/tokenizer.json" download>tokenizer.json (1,024 Akshara Vocab)</a>
-          <a class="m3-chip secondary" href="https://github.com/NikitHamal/Shrota/releases/download/v1-ckpt/shrota_tiny_encoder_int8.onnx">shrota_tiny_encoder_int8.onnx (&le;3.6 MB)</a>
-          <a class="m3-chip tertiary" href="https://github.com/NikitHamal/Shrota/releases/download/v1-ckpt/shrota_base_encoder_int8.onnx">shrota_base_encoder_int8.onnx (&le;11.8 MB)</a>
-          <a class="m3-chip" href="https://github.com/NikitHamal/Shrota/releases/download/v1-ckpt/shrota_shuddha_int8.onnx">shrota_shuddha_int8.onnx (&le;2.2 MB)</a>
-        </div>
+        <div class="download-list" id="download-list"></div>
       </div>
 
-      <div class="studio-grid">
+      <div class="studio-grid even">
         <div class="m3-card">
-          <h3 class="card-title" style="margin-bottom:12px;">Android Kotlin Quickstart (`ShrotaStreamingEngine.kt`)</h3>
-          <pre class="code-block mono">val engine = ShrotaStreamingEngine(
-    encoderModelPath = "${filesDir}/shrota_tiny_encoder_int8.onnx",
-    shuddhaModelPath = "${filesDir}/shrota_shuddha_int8.onnx",
+          <div class="card-header">
+            <h2 class="card-title">Android</h2>
+            <button class="copy-btn" data-copy="code-kotlin">Copy</button>
+          </div>
+          <pre class="code-block mono" id="code-kotlin">val engine = ShrotaStreamingEngine(
+    encoderModelPath = "$filesDir/shrota_base_encoder_int8.onnx",
+    shuddhaModelPath = "$filesDir/shrota_shuddha_int8.onnx",
     vocab = vocabList,
-    dModel = 128,
-    nLayers = 8
 )
 
 engine.startLiveMicrophone(
     listener = object : ShrotaStreamingEngine.Listener {
         override fun onPartialTranscript(text: String, ms: Float, rtf: Float) {
-            liveSubtitle.text = text // 160ms low-latency preview
+            subtitle.text = text
         }
         override fun onFinalClause(raw: String, shuddha: String, conf: Float, ms: Float) {
-            editor.append("$shuddha ") // Hraswa-Dirgha &amp; Punctuation polished!
+            editor.append("$shuddha ")
         }
     },
-    extractMel16x80 = { pcm2560 -> melExtractor.compute16x80(pcm2560) }
+    extractMel16x80 = { pcm -> melExtractor.compute16x80(pcm) },
 )</pre>
         </div>
 
         <div class="m3-card">
-          <h3 class="card-title" style="margin-bottom:12px;">Desktop Live Mic &amp; Dataset Sorting CLI</h3>
-          <pre class="code-block mono"># 1. Live 16kHz Desktop Microphone Dictation (160ms streaming chunks)
+          <div class="card-header">
+            <h2 class="card-title">Desktop</h2>
+            <button class="copy-btn" data-copy="code-desktop">Copy</button>
+          </div>
+          <pre class="code-block mono" id="code-desktop"># Microphone dictation
 python3 scripts/shrota_live_desktop.py --model base
 
-# 2. Stream a single WAV/FLAC file in 160ms chunks
-python3 scripts/shrota_live_desktop.py --file docs/audio/sample_01_eval_fleurs_ne_np.wav
+# Stream a file
+python3 scripts/shrota_live_desktop.py --file clip.wav
 
-# 3. Automatically Sort Noisy Mined Audio Folders into gold / silver / reject
+# Sort a folder into gold / silver / reject
 python3 scripts/shrota_sort.py \
-  --input-dir /path/to/raw_mined_wavs \
-  --output-dir /path/to/sorted_manifests</pre>
+  --input-dir raw_wavs \
+  --output-dir sorted</pre>
         </div>
       </div>
     </section>
-  </div>
+  </main>
 
   <script type="module" src="app.js"></script>
 </body>
