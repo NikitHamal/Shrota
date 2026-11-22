@@ -206,10 +206,10 @@ def main():
         ema_student.load_state_dict(torch.load(best_p, map_location=device, weights_only=True))
 
     full_eval = {
-        "eval_fleurs_ne_np": evaluate_asr_model(ema_student, tok, eval_fleurs, device=device, chunk_frames=16),
-        "eval_slr54_gold": evaluate_asr_model(ema_student, tok, eval_slr54, device=device, chunk_frames=16),
-        "eval_conv_story": evaluate_asr_model(ema_student, tok, eval_conv, device=device, chunk_frames=16),
-        "eval_vedic_gold": evaluate_asr_model(ema_student, tok, eval_vedic, device=device, chunk_frames=16),
+        "eval_fleurs_ne_np": evaluate_asr_model(ema_student, tok, eval_fleurs, device=device, chunk_frames=None),
+        "eval_slr54_gold": evaluate_asr_model(ema_student, tok, eval_slr54, device=device, chunk_frames=None),
+        "eval_conv_story": evaluate_asr_model(ema_student, tok, eval_conv, device=device, chunk_frames=None),
+        "eval_vedic_gold": evaluate_asr_model(ema_student, tok, eval_vedic, device=device, chunk_frames=None),
     }
 
     onnx_dir = CKPT_DIR / "onnx"

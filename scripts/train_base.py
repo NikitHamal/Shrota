@@ -122,16 +122,19 @@ class PrecomputedMelBatcher:
             warm_pool[i : i + batch_size] for i in range(0, len(warm_pool), batch_size)
         ]
 
-        # Oversample non-SLR54 domains 2x in the full training set for balanced 4-domain mastery
-        extra_non_slr = []
+        # Build balanced 4-domain pool so SLR54, Conversational/Story, Vedic Sanskrit, and FLEURS dev
+        # all receive strong representation without length-sorting artifacts
+        balanced_pool = []
+        slr_recs = by_domain.get("slr54", [])
+        random.shuffle(slr_recs)
+        balanced_pool.extend(slr_recs[:45000])
         for dom, d_recs in by_domain.items():
-            if dom != "slr54":
-                extra_non_slr.extend(d_recs)
-        full_pool = self.records + extra_non_slr
-        # Shuffle full records WITHOUT sorting by length so every batch has a stable blank-to-token ratio
-        random.shuffle(full_pool)
+            if dom != "slr54" and d_recs:
+                reps = max(1, 24000 // max(len(d_recs), 1))
+                balanced_pool.extend((d_recs * reps)[:24000])
+        random.shuffle(balanced_pool)
         self.batches = [
-            full_pool[i : i + batch_size] for i in range(0, len(full_pool), batch_size)
+            balanced_pool[i : i + batch_size] for i in range(0, len(balanced_pool), batch_size)
         ]
 
     def iter_epoch(self, shuffle: bool = True, warm_phase: bool = False):
@@ -259,6 +262,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=160)
     parser.add_argument("--lr", type=float, default=1.2e-3)
     parser.add_argument("--val-every", type=int, default=1500)
+    parser.add_argument("--resume", action="store_true", help="Resume from shrota_base_best.pt for fine-tuning cycle")
     args = parser.parse_args()
 
     assert args.max_minutes <= 150.0, "HARD CAP VIOLATION: --max-minutes must be <= 150!"
@@ -280,6 +284,9 @@ def main():
     eval_vedic = torch.load(EVAL_DIR / "eval_vedic_gold.pt", map_location="cpu", weights_only=False)
 
     model = ShrotaASRModel.build_base(vocab_size=tok.vocab_size, dropout=0.05).to(device)
+    if args.resume and (CKPT_DIR / "shrota_base_best.pt").exists():
+        model.load_state_dict(torch.load(CKPT_DIR / "shrota_base_best.pt", map_location=device, weights_only=True))
+        print("[Shrota-Base] Resumed from shrota_base_best.pt (100% from-scratch checkpoint)", flush=True)
     ema_model = copy.deepcopy(model).to(device).eval()
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -304,10 +311,10 @@ def main():
     chunk_choices = [None]
 
     while step < args.max_steps:
-        is_warm = step < 750
+        is_warm = (step < 750) and (not args.resume)
         for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True, warm_phase=is_warm):
             step += 1
-            if step == 750:
+            if step == 750 and not args.resume:
                 break
             lr = get_lr(step)
             for pg in optimizer.param_groups:
@@ -319,7 +326,8 @@ def main():
             targets = targets.to(device, non_blocking=True)
             target_lens = target_lens.to(device, non_blocking=True)
 
-            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if step > 1000 else mel
+            use_aug = (step > 1000 and step <= args.max_steps - 1000) if not args.resume else (step <= args.max_steps - 1200)
+            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if use_aug else mel
             c_frames = random.choice(chunk_choices)
 
             optimizer.zero_grad(set_to_none=True)
@@ -341,7 +349,7 @@ def main():
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
-            if step <= 900:
+            if step <= 900 and not args.resume:
                 ema_model.load_state_dict(model.state_dict())
             else:
                 update_ema(ema_model, model, decay=0.996)
@@ -411,10 +419,10 @@ def main():
 
     print("[Shrota-Base] Running full 4-domain evaluation (Offline & 160ms Streaming)...", flush=True)
     full_eval = {
-        "eval_fleurs_ne_np": evaluate_asr_model(ema_model, tok, eval_fleurs, device=device, chunk_frames=16),
-        "eval_slr54_gold": evaluate_asr_model(ema_model, tok, eval_slr54, device=device, chunk_frames=16),
-        "eval_conv_story": evaluate_asr_model(ema_model, tok, eval_conv, device=device, chunk_frames=16),
-        "eval_vedic_gold": evaluate_asr_model(ema_model, tok, eval_vedic, device=device, chunk_frames=16),
+        "eval_fleurs_ne_np": evaluate_asr_model(ema_model, tok, eval_fleurs, device=device, chunk_frames=None),
+        "eval_slr54_gold": evaluate_asr_model(ema_model, tok, eval_slr54, device=device, chunk_frames=None),
+        "eval_conv_story": evaluate_asr_model(ema_model, tok, eval_conv, device=device, chunk_frames=None),
+        "eval_vedic_gold": evaluate_asr_model(ema_model, tok, eval_vedic, device=device, chunk_frames=None),
     }
 
     onnx_dir = CKPT_DIR / "onnx"

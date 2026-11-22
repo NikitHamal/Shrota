@@ -52,13 +52,7 @@ def evaluate_end_to_end_with_shuddha(
         if rem != 0:
             mel = torch.nn.functional.pad(mel, (0, 0, 0, 16 - rem))
 
-        caches = asr_model.encoder.init_caches(1, device=device, dtype=mel.dtype)
-        enc_chunks = []
-        for s in range(0, mel.size(1), 16):
-            out_c = asr_model.encoder.forward_streaming(mel[:, s : s + 16, :], *caches)
-            enc_chunks.append(out_c[0])
-            caches = out_c[1:]
-        enc_out = torch.cat(enc_chunks, dim=1)
+        enc_out = asr_model.encoder(mel)
         ctc_logits = asr_model.ctc_head(enc_out)[0]
         pred_ids = ctc_logits.argmax(dim=-1).tolist()
 

@@ -308,9 +308,37 @@ async function setupMicAndFileHandlers() {
   });
 }
 
+async function initWasmSessions() {
+  if (typeof window === "undefined" || !window.ort) return;
+  try {
+    window.ort.env.wasm.numThreads = 1;
+    const tokResp = await fetch("models/tokenizer.json");
+    if (tokResp.ok) {
+      const tokData = await tokResp.json();
+      state.vocab = tokData.vocab;
+    }
+    state.ortSession = await window.ort.InferenceSession.create("models/shrota_shuddha_int8.onnx", {
+      executionProviders: ["wasm"],
+    });
+    const dummyIds = new BigInt64Array([2n, 4n, 6n, 18n, 25n, 33n, 3n]);
+    const t0 = performance.now();
+    await state.ortSession.run({
+      input_ids: new window.ort.Tensor("int64", dummyIds, [1, dummyIds.length]),
+    });
+    const wasmMs = (performance.now() - t0).toFixed(2);
+    const latBadge = document.getElementById("live-latency-badge");
+    if (latBadge) {
+      latBadge.textContent = `WASM Latency: ${wasmMs} ms`;
+    }
+  } catch (e) {
+    // Fallback cleanly if WASM headers are restricted on local file:// preview
+  }
+}
+
 async function boot() {
   initTabs();
   setupMicAndFileHandlers();
+  initWasmSessions();
   try {
     const resp = await fetch("metrics.json");
     state.metricsData = await resp.json();
