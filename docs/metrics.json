@@ -1,38 +1,145 @@
 {
-  "generated_at": "2026-11-22 11:38:56 UTC",
+  "generated_at": "2026-11-22 11:53:10 UTC",
+  "hardware": "NVIDIA RTX PRO 6000 Blackwell (98 GB)",
   "models": {
-    "shrota_base": {
-      "name": "Shrota-Base",
+    "shrota_base_shuddha": {
+      "name": "Shrota-Base + Shuddha (160ms Streaming)",
       "params_m": 13.24,
-      "size_mb": 13.637,
+      "size_mb": 13.64,
+      "total_with_shuddha_mb": 15.44,
       "streaming": true,
       "chunk_ms": 160,
-      "latency_ms": 2.34,
+      "latency_ms": 2.9,
       "cpu_1thread_rtf": 0.0146,
+      "onnx_vs_pt_max_abs_diff": 1.71661376953125e-05,
       "domains": {
         "eval_fleurs_ne_np": {
-          "wer": 77.63,
-          "cer": 39.25,
-          "punct_f1": 50.75,
-          "num_utts": 725
+          "wer": 76.61,
+          "cer": 39.05,
+          "punct_f1": 70.32,
+          "num_utts": 725,
+          "hraswa_dirgha_acc": 23.2
         },
         "eval_slr54_gold": {
-          "wer": 71.93,
-          "cer": 38.87,
+          "wer": 71.01,
+          "cer": 38.63,
           "punct_f1": 0.0,
-          "num_utts": 484
+          "num_utts": 484,
+          "hraswa_dirgha_acc": 28.69
         },
         "eval_conv_story": {
-          "wer": 86.08,
-          "cer": 37.2,
-          "punct_f1": 60.68,
-          "num_utts": 300
+          "wer": 86.25,
+          "cer": 37.24,
+          "punct_f1": 32.97,
+          "num_utts": 300,
+          "hraswa_dirgha_acc": 16.56
         },
         "eval_vedic_gold": {
-          "wer": 92.39,
+          "wer": 92.45,
           "cer": 26.73,
+          "punct_f1": 100.0,
+          "num_utts": 200,
+          "hraswa_dirgha_acc": 11.01
+        }
+      },
+      "raw_domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 78.51,
+          "cer": 39.39,
+          "punct_f1": 50.69,
+          "num_utts": 725,
+          "hraswa_dirgha_acc": 22.92
+        },
+        "eval_slr54_gold": {
+          "wer": 73.28,
+          "cer": 39.14,
+          "punct_f1": 0.0,
+          "num_utts": 484,
+          "hraswa_dirgha_acc": 28.16
+        },
+        "eval_conv_story": {
+          "wer": 87.55,
+          "cer": 37.76,
+          "punct_f1": 60.98,
+          "num_utts": 300,
+          "hraswa_dirgha_acc": 16.39
+        },
+        "eval_vedic_gold": {
+          "wer": 93.32,
+          "cer": 27.01,
           "punct_f1": 80.0,
-          "num_utts": 200
+          "num_utts": 200,
+          "hraswa_dirgha_acc": 10.86
+        }
+      }
+    },
+    "shrota_tiny_shuddha": {
+      "name": "Shrota-Tiny + Shuddha (160ms Streaming)",
+      "params_m": 4.71,
+      "size_mb": 3.54,
+      "total_with_shuddha_mb": 5.34,
+      "streaming": true,
+      "chunk_ms": 160,
+      "latency_ms": 1.5,
+      "cpu_1thread_rtf": 0.0061,
+      "domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 83.69,
+          "cer": 50.14,
+          "punct_f1": 69.93,
+          "num_utts": 725,
+          "hraswa_dirgha_acc": 15.21
+        },
+        "eval_slr54_gold": {
+          "wer": 83.56,
+          "cer": 53.39,
+          "punct_f1": 0.0,
+          "num_utts": 484,
+          "hraswa_dirgha_acc": 15.43
+        },
+        "eval_conv_story": {
+          "wer": 91.79,
+          "cer": 52.32,
+          "punct_f1": 33.74,
+          "num_utts": 300,
+          "hraswa_dirgha_acc": 8.93
+        },
+        "eval_vedic_gold": {
+          "wer": 106.58,
+          "cer": 58.55,
+          "punct_f1": 100.0,
+          "num_utts": 200,
+          "hraswa_dirgha_acc": 0.72
+        }
+      },
+      "raw_domains": {
+        "eval_fleurs_ne_np": {
+          "wer": 84.43,
+          "cer": 50.3,
+          "punct_f1": 7.63,
+          "num_utts": 725,
+          "hraswa_dirgha_acc": 15.17
+        },
+        "eval_slr54_gold": {
+          "wer": 85.54,
+          "cer": 53.68,
+          "punct_f1": 0.0,
+          "num_utts": 484,
+          "hraswa_dirgha_acc": 15.21
+        },
+        "eval_conv_story": {
+          "wer": 92.25,
+          "cer": 52.64,
+          "punct_f1": 5.22,
+          "num_utts": 300,
+          "hraswa_dirgha_acc": 8.88
+        },
+        "eval_vedic_gold": {
+          "wer": 107.55,
+          "cer": 58.38,
+          "punct_f1": 0.0,
+          "num_utts": 200,
+          "hraswa_dirgha_acc": 0.72
         }
       }
     },
@@ -105,59 +212,591 @@
       }
     }
   },
-  "shuddha": {
+  "shuddha_ablation": {
     "model": "Shrota-Shuddha",
     "params_m": 1.59,
     "size_int8_mb": 1.807,
     "clause_latency_ms": 0.54,
     "before_shuddha": {
-      "wer": 30.31,
-      "cer": 1.46,
+      "wer": 29.91,
+      "cer": 1.49,
       "punct_f1": 0.0,
       "num_utts": 725,
-      "hraswa_dirgha_acc": 76.14
+      "hraswa_dirgha_acc": 76.01
     },
     "after_shuddha": {
-      "wer": 19.32,
-      "cer": 1.68,
-      "punct_f1": 59.06,
+      "wer": 10.85,
+      "cer": 1.36,
+      "punct_f1": 68.15,
       "num_utts": 725,
-      "hraswa_dirgha_acc": 85.59
+      "hraswa_dirgha_acc": 90.5
     }
   },
-  "examples": [
+  "samples": [
     {
-      "id": "eval_fleurs_ne_np",
-      "title": "FLEURS news read speech",
+      "id": "sample_01",
+      "title": "Nepali News & Broadcast",
       "domain": "eval_fleurs_ne_np",
       "lang": "ne",
-      "reference": "यद्यपि, संचार च्यानलहरू ढिला हुनाले, पश्चिममा शैलीहरू 25 देखि 30 वर्ष पछि रहन सक्दछन्।",
-      "base_raw": "से्पि संसाराहरू भला हुनउने पश्चिममा सरगहरू पक्षदेखि सपपछि हुनसकदछन।"
+      "audio_url": "audio/sample_01_eval_fleurs_ne_np.wav",
+      "duration_s": 9.36,
+      "reference": "जापानको आणविक एजेन्सीकाअनुसार विरुवामा रेडियोधर्मी सिजियम र आयोडिन फेला परेको छ।",
+      "base_raw": "जपानको आरुवाक एजेन्सीका अनुसार विरुवामा लिडि धर्म सिजिए र आइयोडि खेला परेको छ",
+      "base_shuddha": "जपानको आरुवाक एजेन्सीका अनुसार विरुवामा लिडि धर्म सिजिए र आइयोडि खेला परेको छ।",
+      "tiny_shuddha": "जबपा नेपालको आवि एसिका अनुसार विवामा एक रेडियो धर्म सि र आइयोडि खेलारि परेको छ।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "जपानको",
+          "t0": 0.0,
+          "t1": 0.72
+        },
+        {
+          "word": "आरुवाक",
+          "t0": 0.72,
+          "t1": 1.44
+        },
+        {
+          "word": "एजेन्सीका",
+          "t0": 1.44,
+          "t1": 2.16
+        },
+        {
+          "word": "अनुसार",
+          "t0": 2.16,
+          "t1": 2.88
+        },
+        {
+          "word": "विरुवामा",
+          "t0": 2.88,
+          "t1": 3.6
+        },
+        {
+          "word": "लिडि",
+          "t0": 3.6,
+          "t1": 4.32
+        },
+        {
+          "word": "धर्म",
+          "t0": 4.32,
+          "t1": 5.04
+        },
+        {
+          "word": "सिजिए",
+          "t0": 5.04,
+          "t1": 5.76
+        },
+        {
+          "word": "र",
+          "t0": 5.76,
+          "t1": 6.48
+        },
+        {
+          "word": "आइयोडि",
+          "t0": 6.48,
+          "t1": 7.2
+        },
+        {
+          "word": "खेला",
+          "t0": 7.2,
+          "t1": 7.92
+        },
+        {
+          "word": "परेको",
+          "t0": 7.92,
+          "t1": 8.64
+        },
+        {
+          "word": "छ।",
+          "t0": 8.64,
+          "t1": 9.36
+        }
+      ]
     },
     {
-      "id": "eval_slr54_gold",
-      "title": "OpenSLR 54 unseen speakers",
+      "id": "sample_02",
+      "title": "Nepali Science & Nature",
+      "domain": "eval_fleurs_ne_np",
+      "lang": "ne",
+      "audio_url": "audio/sample_02_eval_fleurs_ne_np.wav",
+      "duration_s": 9.78,
+      "reference": "प्राकृतिक वातावरणमा बोटबिरुवाहरू उत्तम देखिन्छन्, त्यसैले केवल एउटा नमूना मात्र पनि हटाउने विचारको प्रतिरोध गर्नुहोस्।",
+      "base_raw": "कृतिकतावरणमा बटबरुवाहरूत्त देखि देखिन्छ त्यसैले केवलि एउटा नम्ब्नामा मात्र पनि हटाउने वि विचारको प्रतियोगध गर्नुहोस्",
+      "base_shuddha": "कृतिकतावरणमा बटबरुवाहरूत्तदेखि देखिन्छ त्यसैले केवली एउटा नम्ब्नामा मात्र पनि हटाउने विचारको प्रतियोगध गर्नुहोस्।",
+      "tiny_shuddha": "कृतिकबाटरमा गोट विवाहरू तदेखि देखिन्छ त्यसैले किजका नन्दा मात्र पनिटउने विचारको पटी गर्नुहोस्।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "कृतिकतावरणमा",
+          "t0": 0.0,
+          "t1": 0.75
+        },
+        {
+          "word": "बटबरुवाहरूत्तदेखि",
+          "t0": 0.75,
+          "t1": 1.5
+        },
+        {
+          "word": "देखिन्छ",
+          "t0": 1.5,
+          "t1": 2.26
+        },
+        {
+          "word": "त्यसैले",
+          "t0": 2.26,
+          "t1": 3.01
+        },
+        {
+          "word": "केवली",
+          "t0": 3.01,
+          "t1": 3.76
+        },
+        {
+          "word": "एउटा",
+          "t0": 3.76,
+          "t1": 4.51
+        },
+        {
+          "word": "नम्ब्नामा",
+          "t0": 4.51,
+          "t1": 5.27
+        },
+        {
+          "word": "मात्र",
+          "t0": 5.27,
+          "t1": 6.02
+        },
+        {
+          "word": "पनि",
+          "t0": 6.02,
+          "t1": 6.77
+        },
+        {
+          "word": "हटाउने",
+          "t0": 6.77,
+          "t1": 7.52
+        },
+        {
+          "word": "विचारको",
+          "t0": 7.52,
+          "t1": 8.28
+        },
+        {
+          "word": "प्रतियोगध",
+          "t0": 8.28,
+          "t1": 9.03
+        },
+        {
+          "word": "गर्नुहोस्।",
+          "t0": 9.03,
+          "t1": 9.78
+        }
+      ]
+    },
+    {
+      "id": "sample_03",
+      "title": "Nepali History & Culture",
+      "domain": "eval_fleurs_ne_np",
+      "lang": "ne",
+      "audio_url": "audio/sample_03_eval_fleurs_ne_np.wav",
+      "duration_s": 10.98,
+      "reference": "ग्रिकको ज्ञानमा गिरावट आउँदा, पश्चिमले आफूलाई आफ्नो ग्रिक दार्शनिक र वैज्ञानिक जराबाट टाढा भएको पायो।",
+      "base_raw": "गिकको ग्याननमा गीरावटउँदाश्चिमीलेफूलाई आ आफ्नोृतिक दा्र्शनीति र वैज्ञानिक जाराबाट टाढाडा भएको पायो",
+      "base_shuddha": "गिकको ग्याननमा गीरावटउँदाश्चिमीलेफूलाई आफ्नोतिक दा्र्शनीति र वैज्ञानिक जाराबाट टाढाडा भएको पायो।",
+      "tiny_shuddha": "कको व्यामा जीवनराव आउँदाश्चिमीलेफलाई आफ्नोत्यकसमिति बैज्ञायानिति जराबाट काड भएको यो।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "गिकको",
+          "t0": 0.0,
+          "t1": 1.0
+        },
+        {
+          "word": "ग्याननमा",
+          "t0": 1.0,
+          "t1": 2.0
+        },
+        {
+          "word": "गीरावटउँदाश्चिमीलेफूलाई",
+          "t0": 2.0,
+          "t1": 2.99
+        },
+        {
+          "word": "आफ्नोतिक",
+          "t0": 2.99,
+          "t1": 3.99
+        },
+        {
+          "word": "दा्र्शनीति",
+          "t0": 3.99,
+          "t1": 4.99
+        },
+        {
+          "word": "र",
+          "t0": 4.99,
+          "t1": 5.99
+        },
+        {
+          "word": "वैज्ञानिक",
+          "t0": 5.99,
+          "t1": 6.99
+        },
+        {
+          "word": "जाराबाट",
+          "t0": 6.99,
+          "t1": 7.99
+        },
+        {
+          "word": "टाढाडा",
+          "t0": 7.99,
+          "t1": 8.98
+        },
+        {
+          "word": "भएको",
+          "t0": 8.98,
+          "t1": 9.98
+        },
+        {
+          "word": "पायो।",
+          "t0": 9.98,
+          "t1": 10.98
+        }
+      ]
+    },
+    {
+      "id": "sample_04",
+      "title": "SLR54 Unseen Speaker A",
       "domain": "eval_slr54_gold",
       "lang": "ne",
-      "reference": "०३१ सालमा पञ्चायती",
-      "base_raw": "एक ३ सा पचायती"
+      "audio_url": "audio/sample_04_eval_slr54_gold.wav",
+      "duration_s": 2.6,
+      "reference": "गाई पाल्ने र नगरको",
+      "base_raw": "गाई पा् र नगरको",
+      "base_shuddha": "गाई पा र नगरको।",
+      "tiny_shuddha": "अन्य र नगरको।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "गाई",
+          "t0": 0.0,
+          "t1": 0.65
+        },
+        {
+          "word": "पा",
+          "t0": 0.65,
+          "t1": 1.3
+        },
+        {
+          "word": "र",
+          "t0": 1.3,
+          "t1": 1.95
+        },
+        {
+          "word": "नगरको।",
+          "t0": 1.95,
+          "t1": 2.6
+        }
+      ]
     },
     {
-      "id": "eval_conv_story",
-      "title": "Conversation and storytelling",
+      "id": "sample_05",
+      "title": "SLR54 Unseen Speaker B",
+      "domain": "eval_slr54_gold",
+      "lang": "ne",
+      "audio_url": "audio/sample_05_eval_slr54_gold.wav",
+      "duration_s": 4.95,
+      "reference": "उहाँ गणेशमान सिंह अध्ययन प्रतिष्ठानका संस्थापक तथा अध्यक्ष हुनुहुन्छ।",
+      "base_raw": "उहाँशमा सि अत्य प्रतिष्ठनका संस्थापत्त तथा अध्यक्ष हुनुहुन्छ",
+      "base_shuddha": "उहाँशमा सि अत्य प्रतिष्ठनका संस्थापत्त तथा अध्यक्ष हुनुहुन्छ।",
+      "tiny_shuddha": "उहाँ प्रवेशमा चि अध्ययन प्रतिस्ता संस्थाको तथा दक्षिण हुन्छ।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "उहाँशमा",
+          "t0": 0.0,
+          "t1": 0.62
+        },
+        {
+          "word": "सि",
+          "t0": 0.62,
+          "t1": 1.24
+        },
+        {
+          "word": "अत्य",
+          "t0": 1.24,
+          "t1": 1.86
+        },
+        {
+          "word": "प्रतिष्ठनका",
+          "t0": 1.86,
+          "t1": 2.48
+        },
+        {
+          "word": "संस्थापत्त",
+          "t0": 2.48,
+          "t1": 3.09
+        },
+        {
+          "word": "तथा",
+          "t0": 3.09,
+          "t1": 3.71
+        },
+        {
+          "word": "अध्यक्ष",
+          "t0": 3.71,
+          "t1": 4.33
+        },
+        {
+          "word": "हुनुहुन्छ।",
+          "t0": 4.33,
+          "t1": 4.95
+        }
+      ]
+    },
+    {
+      "id": "sample_06",
+      "title": "Spontaneous Conversational",
       "domain": "eval_conv_story",
       "lang": "ne",
+      "audio_url": "audio/sample_06_eval_conv_story.wav",
+      "duration_s": 6.63,
       "reference": "नमस्ते स्वागत छ हिमाली सोरहरूमा नेपालीमन र नेपालीपन सँग नजेक।",
-      "base_raw": "नमस्ते स्वागत छ हिमाली सोरहरुमा नेपालीमन र नेपालीपन सँगनजेक।"
+      "base_raw": "नमस्ते स्वागत छ हिमाली सोरहरुमा नेपालीमन र नेपालीपन सँगनजेक।",
+      "base_shuddha": "नमस्ते स्वागत छ हिमाली सोरहरुमा नेपालीमन र नेपालीपन सँगनजेक।",
+      "tiny_shuddha": "मस्त स्वाग हिमाली सोरहरूमा नेपाली मागे नेपालीन सन जी।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "नमस्ते",
+          "t0": 0.0,
+          "t1": 0.74
+        },
+        {
+          "word": "स्वागत",
+          "t0": 0.74,
+          "t1": 1.47
+        },
+        {
+          "word": "छ",
+          "t0": 1.47,
+          "t1": 2.21
+        },
+        {
+          "word": "हिमाली",
+          "t0": 2.21,
+          "t1": 2.95
+        },
+        {
+          "word": "सोरहरुमा",
+          "t0": 2.95,
+          "t1": 3.68
+        },
+        {
+          "word": "नेपालीमन",
+          "t0": 3.68,
+          "t1": 4.42
+        },
+        {
+          "word": "र",
+          "t0": 4.42,
+          "t1": 5.16
+        },
+        {
+          "word": "नेपालीपन",
+          "t0": 5.16,
+          "t1": 5.89
+        },
+        {
+          "word": "सँगनजेक।",
+          "t0": 5.89,
+          "t1": 6.63
+        }
+      ]
     },
     {
-      "id": "eval_vedic_gold",
-      "title": "Vedic verse",
+      "id": "sample_07",
+      "title": "Nepali Storytelling Narrative",
+      "domain": "eval_conv_story",
+      "lang": "ne",
+      "audio_url": "audio/sample_07_eval_conv_story.wav",
+      "duration_s": 3.33,
+      "reference": "विचार, बहस अनि मन्थनको डोको",
+      "base_raw": "विचा बहस अनि मन्थननको डोको",
+      "base_shuddha": "विचा बहस अनि मन्थननको डोको।",
+      "tiny_shuddha": "तन कोटो।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "विचा",
+          "t0": 0.0,
+          "t1": 0.67
+        },
+        {
+          "word": "बहस",
+          "t0": 0.67,
+          "t1": 1.33
+        },
+        {
+          "word": "अनि",
+          "t0": 1.33,
+          "t1": 2.0
+        },
+        {
+          "word": "मन्थननको",
+          "t0": 2.0,
+          "t1": 2.66
+        },
+        {
+          "word": "डोको।",
+          "t0": 2.66,
+          "t1": 3.33
+        }
+      ]
+    },
+    {
+      "id": "sample_08",
+      "title": "Expressive Radio Dialogue",
+      "domain": "eval_conv_story",
+      "lang": "ne",
+      "audio_url": "audio/sample_08_eval_conv_story.wav",
+      "duration_s": 3.13,
+      "reference": "नमस्ते, स्वागत अनि शुभकामना।",
+      "base_raw": "नमस्ते, स्वागत अनि सुवाकामाना",
+      "base_shuddha": "नमस्ते स्वागत अनि सुवाकामाना।",
+      "tiny_shuddha": "जस्तै स्वादरि सुकारा।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "नमस्ते",
+          "t0": 0.0,
+          "t1": 0.78
+        },
+        {
+          "word": "स्वागत",
+          "t0": 0.78,
+          "t1": 1.56
+        },
+        {
+          "word": "अनि",
+          "t0": 1.56,
+          "t1": 2.35
+        },
+        {
+          "word": "सुवाकामाना।",
+          "t0": 2.35,
+          "t1": 3.13
+        }
+      ]
+    },
+    {
+      "id": "sample_09",
+      "title": "Vedic Sanskrit Chant I",
       "domain": "eval_vedic_gold",
       "lang": "sa",
-      "reference": "अवन श्रीपतिरप्रतिरधिकेशादिभवादे करुणापूर्ण वरप्रद चरितं ज्ञापय मे ते",
-      "base_raw": "अवः श्रीपतिप्रतिधिकेषादिभावादे करुणापूर्ण वरप्रद चरितं ज्ापय मे ते"
+      "audio_url": "audio/sample_09_eval_vedic_gold.wav",
+      "duration_s": 9.29,
+      "reference": "अभेदश्चास्मदादीनां मुक्तानां हरिणा तथा इत्यादि सर्वं मोहाय कथ्यते पुत्र नान्यथा",
+      "base_raw": "अभेद्चास्मदादीनां मुक्तानां हरिणा तथा इत्यादि सर्वं मोहाय कथयते पुत्रनन्यथा",
+      "base_shuddha": "अभेद्चास्मदादीनां मुक्तानां हरिणा तथा इत्यादि सर्वं मोहाय कथयते पुत्रनन्यथा।",
+      "tiny_shuddha": "अध्ययनत् मातादीन मुक्तनामरित तथा्दिः यतक्षते पुत्रन्यथा।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "अभेद्चास्मदादीनां",
+          "t0": 0.0,
+          "t1": 1.03
+        },
+        {
+          "word": "मुक्तानां",
+          "t0": 1.03,
+          "t1": 2.06
+        },
+        {
+          "word": "हरिणा",
+          "t0": 2.06,
+          "t1": 3.1
+        },
+        {
+          "word": "तथा",
+          "t0": 3.1,
+          "t1": 4.13
+        },
+        {
+          "word": "इत्यादि",
+          "t0": 4.13,
+          "t1": 5.16
+        },
+        {
+          "word": "सर्वं",
+          "t0": 5.16,
+          "t1": 6.19
+        },
+        {
+          "word": "मोहाय",
+          "t0": 6.19,
+          "t1": 7.23
+        },
+        {
+          "word": "कथयते",
+          "t0": 7.23,
+          "t1": 8.26
+        },
+        {
+          "word": "पुत्रनन्यथा।",
+          "t0": 8.26,
+          "t1": 9.29
+        }
+      ]
+    },
+    {
+      "id": "sample_10",
+      "title": "Vedic Sanskrit Stotra II",
+      "domain": "eval_vedic_gold",
+      "lang": "sa",
+      "audio_url": "audio/sample_10_eval_vedic_gold.wav",
+      "duration_s": 9.83,
+      "reference": "निर्णयः सर्वशास्त्राणां भारतं परिकीर्तितम् भारतं सर्ववेदाश्च तुलामारोपिताः पुरा",
+      "base_raw": "निर्णयः सर्वशास्त्राणां भारतं पकीर्तिंम् भरतं सर्ववेदाश्चतुलामारोपिताः पुरा",
+      "base_shuddha": "निर्णयः सर्वशास्त्राणां भारतं पकीर्तिंम् भरतं सर्ववेदाश्चतुलामारोपिताः पुरा।",
+      "tiny_shuddha": "यो सरवमा्नाझरतंति यतांद्ध त सदा्तोनामातिता पुरा।",
+      "confidence": 0.88,
+      "words": [
+        {
+          "word": "निर्णयः",
+          "t0": 0.0,
+          "t1": 1.4
+        },
+        {
+          "word": "सर्वशास्त्राणां",
+          "t0": 1.4,
+          "t1": 2.81
+        },
+        {
+          "word": "भारतं",
+          "t0": 2.81,
+          "t1": 4.21
+        },
+        {
+          "word": "पकीर्तिंम्",
+          "t0": 4.21,
+          "t1": 5.62
+        },
+        {
+          "word": "भरतं",
+          "t0": 5.62,
+          "t1": 7.02
+        },
+        {
+          "word": "सर्ववेदाश्चतुलामारोपिताः",
+          "t0": 7.02,
+          "t1": 8.43
+        },
+        {
+          "word": "पुरा।",
+          "t0": 8.43,
+          "t1": 9.83
+        }
+      ]
     }
-  ],
-  "samples": []
+  ]
 }

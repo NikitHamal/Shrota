@@ -4,17 +4,17 @@
   "size_int8_mb": 1.807,
   "clause_latency_ms": 0.54,
   "before_shuddha": {
-    "wer": 30.31,
-    "cer": 1.46,
+    "wer": 29.91,
+    "cer": 1.49,
     "punct_f1": 0.0,
     "num_utts": 725,
-    "hraswa_dirgha_acc": 76.14
+    "hraswa_dirgha_acc": 76.01
   },
   "after_shuddha": {
-    "wer": 19.32,
-    "cer": 1.68,
-    "punct_f1": 59.06,
+    "wer": 10.85,
+    "cer": 1.36,
+    "punct_f1": 68.15,
     "num_utts": 725,
-    "hraswa_dirgha_acc": 85.59
+    "hraswa_dirgha_acc": 90.5
   }
 }
