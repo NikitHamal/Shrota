@@ -154,8 +154,12 @@ class CacheAwareCausalAttention(nn.Module):
         # and full-sequence execution!
         q_idx = torch.arange(T, device=x.device).unsqueeze(1)  # (T, 1)
         k_idx = torch.arange(L_ctx + T, device=x.device).unsqueeze(0)  # (1, L_ctx + T)
-        # Valid keys for query q_idx are in [q_idx, q_idx + L_ctx]
-        invalid = (k_idx > (q_idx + L_ctx)) | (k_idx < q_idx)
+        rel_pos = k_idx - (q_idx + L_ctx)  # (T, L_ctx + T), 0 at self, negative for past
+        invalid = (rel_pos > 0) | (rel_pos < -L_ctx)
+        slopes = torch.tensor(
+            [0.15, 0.35, 0.75, 1.50][: self.n_heads], device=x.device, dtype=scores.dtype
+        ).view(1, self.n_heads, 1, 1)
+        scores = scores + slopes * torch.clamp(rel_pos, min=-L_ctx, max=0).to(scores.dtype).unsqueeze(0).unsqueeze(0)
         scores = scores.masked_fill(invalid.unsqueeze(0).unsqueeze(0), -1e4)
 
         attn = torch.softmax(scores, dim=-1)

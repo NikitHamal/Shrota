@@ -75,16 +75,16 @@ def apply_spec_and_mic_augment(mel: torch.Tensor, mel_lens: torch.Tensor) -> tor
         noise_std = random.uniform(0.02, 0.12)
         out = out + torch.randn_like(out) * noise_std
 
-    # 3. Frequency masking (2 masks up to 15 bins)
+    # 3. Frequency masking (2 masks up to 10 bins)
     for _ in range(2):
-        f_width = random.randint(2, 14)
+        f_width = random.randint(2, 10)
         f0 = random.randint(0, max(0, F_bins - f_width))
         out[:, :, f0 : f0 + f_width] = 0.0
 
-    # 4. Time masking (2 masks up to 8% of sequence length)
+    # 4. Time masking (2 masks up to 6% of sequence length)
     if T >= 24:
         for _ in range(2):
-            t_width = random.randint(2, max(3, min(32, T // 12)))
+            t_width = random.randint(2, max(3, min(20, T // 16)))
             t0 = random.randint(0, max(0, T - t_width))
             out[:, t0 : t0 + t_width, :] = 0.0
 
@@ -92,10 +92,11 @@ def apply_spec_and_mic_augment(mel: torch.Tensor, mel_lens: torch.Tensor) -> tor
 
 
 class PrecomputedMelBatcher:
-    """High-speed GPU-resident / SSD-precomputed dynamic length-bucketed batch generator."""
+    """High-speed GPU-resident / SSD-precomputed mixed-length multi-domain batch generator."""
 
-    def __init__(self, shard_paths: list[str], batch_size: int = 160, max_frames: int = 1200):
+    def __init__(self, shard_paths: list[str], batch_size: int = 128, max_frames: int = 1000):
         self.records = []
+        by_domain: dict[str, list[dict]] = {}
         for sp in shard_paths:
             recs = torch.load(sp, map_location="cpu", weights_only=False)
             for r in recs:
@@ -104,29 +105,43 @@ class PrecomputedMelBatcher:
                 spoken_t = raw_t[raw_t > 7]
                 T = r["mel"].size(0)
                 U = spoken_t.numel()
-                if 16 <= T <= max_frames and 1 <= U <= max(1, (T // 8) - 1):
+                if 16 <= T <= max_frames and 1 <= U <= max(1, (T // 8) - 2):
                     r["tokens"] = spoken_t
                     self.records.append(r)
+                    dom = r.get("domain", "slr54")
+                    by_domain.setdefault(dom, []).append(r)
         print(f"[Batcher] Loaded {len(self.records)} valid utterances into RAM.", flush=True)
-        # Group into coarse length buckets of 8,000 then shuffle inside each bucket for speaker/domain diversity
-        self.records.sort(key=lambda r: r["mel"].size(0))
-        bucket_size = 8000
-        for b_start in range(0, len(self.records), bucket_size):
-            sub = self.records[b_start : b_start + bucket_size]
-            random.shuffle(sub)
-            self.records[b_start : b_start + bucket_size] = sub
-        self.batches = []
-        for i in range(0, len(self.records), batch_size):
-            self.batches.append(self.records[i : i + batch_size])
 
-    def iter_epoch(self, shuffle: bool = True):
-        idxs = list(range(len(self.batches)))
+        # Build a balanced multi-domain symmetry-breaking warm-start pool (~4,096 utterances, unsorted lengths!)
+        warm_pool = []
+        for dom, d_recs in by_domain.items():
+            take = min(len(d_recs), 1400 if dom == "slr54" else 1200)
+            warm_pool.extend(d_recs[:take])
+        random.shuffle(warm_pool)
+        self.warm_batches = [
+            warm_pool[i : i + batch_size] for i in range(0, len(warm_pool), batch_size)
+        ]
+
+        # Oversample non-SLR54 domains 2x in the full training set for balanced 4-domain mastery
+        extra_non_slr = []
+        for dom, d_recs in by_domain.items():
+            if dom != "slr54":
+                extra_non_slr.extend(d_recs)
+        full_pool = self.records + extra_non_slr
+        # Shuffle full records WITHOUT sorting by length so every batch has a stable blank-to-token ratio
+        random.shuffle(full_pool)
+        self.batches = [
+            full_pool[i : i + batch_size] for i in range(0, len(full_pool), batch_size)
+        ]
+
+    def iter_epoch(self, shuffle: bool = True, warm_phase: bool = False):
+        pool = self.warm_batches if warm_phase else self.batches
+        idxs = list(range(len(pool)))
         if shuffle:
             random.shuffle(idxs)
         for idx in idxs:
-            batch = self.batches[idx]
-            # Optional speed perturbation in feature domain (0.9x, 1.0x, 1.1x via linear time resampling)
-            speed = random.choice([0.9, 1.0, 1.0, 1.1]) if shuffle else 1.0
+            batch = pool[idx]
+            speed = random.choice([0.95, 1.0, 1.0, 1.05]) if (shuffle and not warm_phase) else 1.0
             mels = []
             mel_lens = []
             toks = []
@@ -212,12 +227,12 @@ def evaluate_asr_model(
                     torch.tensor([prev1_tok], device=device),
                 )
                 tdt_logits, _ = model.joint.forward_step(enc_out[:, t_idx, :], pred_state)
-                comb = 0.80 * F.log_softmax(ctc_logits[t_idx : t_idx + 1], dim=-1) + 0.20 * F.log_softmax(tdt_logits, dim=-1)
+                comb = 0.85 * F.log_softmax(ctc_logits[t_idx : t_idx + 1], dim=-1) + 0.15 * F.log_softmax(tdt_logits, dim=-1)
+                comb[:, blank_id] = -1e9
                 best_id = int(comb[0].argmax(dim=-1).item())
-                if best_id != blank_id:
-                    dedup_ids.append(best_id)
-                    prev2_tok = prev1_tok
-                    prev1_tok = best_id
+                dedup_ids.append(best_id)
+                prev2_tok = prev1_tok
+                prev1_tok = best_id
             prev = cid
 
         hyp = tokenizer.decode(dedup_ids)
@@ -264,7 +279,7 @@ def main():
     eval_conv = torch.load(EVAL_DIR / "eval_conv_story.pt", map_location="cpu", weights_only=False)
     eval_vedic = torch.load(EVAL_DIR / "eval_vedic_gold.pt", map_location="cpu", weights_only=False)
 
-    model = ShrotaASRModel.build_base(vocab_size=tok.vocab_size, dropout=0.1).to(device)
+    model = ShrotaASRModel.build_base(vocab_size=tok.vocab_size, dropout=0.05).to(device)
     ema_model = copy.deepcopy(model).to(device).eval()
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -272,13 +287,13 @@ def main():
     update_status("phase2", f"Training Shrota-Base ({n_params/1e6:.2f}M params, cap={args.max_minutes}m)...")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.98), weight_decay=1e-2)
-    warmup_steps = min(600, args.max_steps // 10)
+    warmup_steps = min(200, max(50, args.max_steps // 20))
 
     def get_lr(step: int) -> float:
         if step < warmup_steps:
             return args.lr * (step + 1) / warmup_steps
         prog = (step - warmup_steps) / max(1, args.max_steps - warmup_steps)
-        return args.lr * 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog)))
+        return max(args.lr * 0.08, args.lr * 0.5 * (1.0 + math.cos(math.pi * min(1.0, prog))))
 
     step = 0
     best_wer = 999.0
@@ -289,8 +304,11 @@ def main():
     chunk_choices = [None]
 
     while step < args.max_steps:
-        for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True):
+        is_warm = step < 750
+        for mel, mel_lens, targets, target_lens in batcher.iter_epoch(shuffle=True, warm_phase=is_warm):
             step += 1
+            if step == 750:
+                break
             lr = get_lr(step)
             for pg in optimizer.param_groups:
                 pg["lr"] = lr
@@ -301,7 +319,7 @@ def main():
             targets = targets.to(device, non_blocking=True)
             target_lens = target_lens.to(device, non_blocking=True)
 
-            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if step > 300 else mel
+            mel_aug = apply_spec_and_mic_augment(mel, mel_lens) if step > 1000 else mel
             c_frames = random.choice(chunk_choices)
 
             optimizer.zero_grad(set_to_none=True)
@@ -323,10 +341,10 @@ def main():
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer.step()
-            if step <= 300:
+            if step <= 900:
                 ema_model.load_state_dict(model.state_dict())
             else:
-                update_ema(ema_model, model, decay=0.992)
+                update_ema(ema_model, model, decay=0.996)
 
             # MANDATORY STEP-50 THROUGHPUT WATCHDOG GATE
             if step == 50:

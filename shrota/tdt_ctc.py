@@ -98,9 +98,8 @@ class ShrotaASRModel(nn.Module):
             dropout=dropout,
         )
         self.ctc_head = nn.Linear(d_model, vocab_size)
-        # Initialize blank bias slightly negative to prevent early CTC blank plateau
         with torch.no_grad():
-            self.ctc_head.bias[0] = -2.0
+            self.ctc_head.bias.zero_()
         self.predictor = Stateless2GramPredictor(vocab_size=vocab_size, d_pred=d_model)
         self.joint = TDTJointNetwork(d_enc=d_model, d_pred=d_model, d_joint=d_model, vocab_size=vocab_size)
 
@@ -172,7 +171,7 @@ class ShrotaASRModel(nn.Module):
         ctc_logits = self.ctc_head(enc_out)  # (B, T_enc, V)
         ctc_log_probs = F.log_softmax(ctc_logits.float(), dim=-1).transpose(0, 1)  # (T_enc, B, V)
 
-        main_ctc_loss = F.ctc_loss(
+        ctc_loss = F.ctc_loss(
             ctc_log_probs,
             targets,
             enc_lens,
@@ -182,33 +181,34 @@ class ShrotaASRModel(nn.Module):
             zero_infinity=True,
         )
 
-        # Intermediate CTC (InterCTC) at 1/3 and 2/3 encoder depth for fast deep Conformer convergence
-        if layer_states is not None and len(layer_states) >= 6:
-            l1 = layer_states[len(layer_states) // 3 - 1]
-            l2 = layer_states[(2 * len(layer_states)) // 3 - 1]
-            lp1 = F.log_softmax(self.ctc_head(l1).float(), dim=-1).transpose(0, 1)
-            lp2 = F.log_softmax(self.ctc_head(l2).float(), dim=-1).transpose(0, 1)
-            inter1 = F.ctc_loss(lp1, targets, enc_lens, target_lens, blank=blank_id, reduction="mean", zero_infinity=True)
-            inter2 = F.ctc_loss(lp2, targets, enc_lens, target_lens, blank=blank_id, reduction="mean", zero_infinity=True)
-            ctc_loss = 0.65 * main_ctc_loss + 0.175 * inter1 + 0.175 * inter2
-        else:
-            ctc_loss = main_ctc_loss
-
-        # Frame-aligned Stateless TDT / Transducer training objective:
-        # Align each target u in [0..U-1] to its proportional acoustic frame t_u and
-        # next blank/duration frame t_blank, training both the 2-gram contextual predictor
-        # and duration skip head without O(B*T*U*V) memory blowup!
+        # CTC-Guided Stateless TDT / Transducer training objective:
+        # Locate the local acoustic peak frame t_best around proportional position t_pos
+        # for each target token u in [0..U-1], and train the 2-gram predictor + joint network
+        # on detached encoder states so the encoder receives 100% pure CTC alignment gradients.
         U_max = targets.size(1)
+        T_enc = enc_out.size(1)
         bos_col = torch.full((B, 1), bos_id, dtype=targets.dtype, device=targets.device)
         prev_tokens = torch.cat([bos_col, targets[:, :-1]], dim=1)  # (B, U_max)
         pred_states = self.predictor.forward_sequence(prev_tokens)  # (B, U_max, D)
 
-        # Gather proportional acoustic frames for each target position u
         u_pos = torch.arange(U_max, device=mel.device).unsqueeze(0).expand(B, U_max)
-        t_pos = ((u_pos.float() + 0.5) * enc_lens.unsqueeze(1).float() / torch.clamp(target_lens.unsqueeze(1).float(), min=1.0)).long()
-        t_pos = torch.clamp(t_pos, min=0, max=enc_out.size(1) - 1)
-        enc_aligned = torch.gather(enc_out, 1, t_pos.unsqueeze(-1).expand(-1, -1, self.d_model))
+        t_center = ((u_pos.float() + 0.5) * enc_lens.unsqueeze(1).float() / torch.clamp(target_lens.unsqueeze(1).float(), min=1.0)).long()
+        t_center = torch.clamp(t_center, min=0, max=T_enc - 1)
 
+        # Search local window [-3..+3] around t_center for highest CTC posterior of targets[b, u]
+        with torch.no_grad():
+            ctc_det = ctc_logits.detach()  # (B, T_enc, V)
+            best_t = t_center.clone()
+            best_score = torch.full((B, U_max), -1e9, device=mel.device, dtype=ctc_det.dtype)
+            for delta in range(-3, 4):
+                t_cand = torch.clamp(t_center + delta, min=0, max=T_enc - 1)
+                logits_cand = torch.gather(ctc_det, 1, t_cand.unsqueeze(-1).expand(-1, -1, self.vocab_size))
+                score_cand = torch.gather(logits_cand, 2, targets.unsqueeze(-1)).squeeze(-1)
+                better = score_cand > best_score
+                best_score = torch.where(better, score_cand, best_score)
+                best_t = torch.where(better, t_cand, best_t)
+
+        enc_aligned = torch.gather(enc_out.detach(), 1, best_t.unsqueeze(-1).expand(-1, -1, self.d_model))
         tok_logits, dur_logits = self.joint.forward_step(enc_aligned, pred_states)
         mask = (u_pos < target_lens.unsqueeze(1)).float()
 
@@ -219,20 +219,9 @@ class ShrotaASRModel(nn.Module):
         )
         tok_loss = (ce_tok * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
-        # Direct acoustic token supervision on ctc_logits at proportional frames t_pos
-        # Eliminates CTC blank plateau from step 1 and locks in monotonic subword alignment
-        ctc_aligned = torch.gather(ctc_logits, 1, t_pos.unsqueeze(-1).expand(-1, -1, self.vocab_size))
-        ce_ctc_align = F.cross_entropy(
-            ctc_aligned.float().transpose(1, 2),
-            targets,
-            reduction="none",
-        )
-        ctc_align_loss = (ce_ctc_align * mask).sum() / torch.clamp(mask.sum(), min=1.0)
-
         # Target duration skips: how many acoustic frames between token u and u+1 (mapped to {0,1,2,4})
-        t_next = torch.cat([t_pos[:, 1:], enc_lens.unsqueeze(1)], dim=1)
-        frame_delta = torch.clamp(t_next - t_pos, min=0)
-        # Map delta to index in TDT_DURATIONS = [0, 1, 2, 4]: 0->0, 1->1, 2..3->2, >=4->3
+        t_next = torch.cat([best_t[:, 1:], enc_lens.unsqueeze(1)], dim=1)
+        frame_delta = torch.clamp(t_next - best_t, min=0)
         dur_target = torch.zeros_like(frame_delta)
         dur_target = torch.where(frame_delta == 1, torch.ones_like(dur_target), dur_target)
         dur_target = torch.where((frame_delta >= 2) & (frame_delta < 4), torch.full_like(dur_target, 2), dur_target)
@@ -244,14 +233,7 @@ class ShrotaASRModel(nn.Module):
             reduction="none",
         )
         dur_loss = (ce_dur * mask).sum() / torch.clamp(mask.sum(), min=1.0)
+        tdt_loss = tok_loss + 0.25 * dur_loss
 
-        # Also train blank emission on non-token acoustic frames
-        t_rand = (torch.rand((B, U_max), device=mel.device) * enc_lens.unsqueeze(1).float()).long()
-        t_rand = torch.clamp(t_rand, min=0, max=enc_out.size(1) - 1)
-        enc_blank = torch.gather(enc_out, 1, t_rand.unsqueeze(-1).expand(-1, -1, self.d_model))
-        blank_logits, _ = self.joint.forward_step(enc_blank, pred_states.detach())
-        # Blend joint contextual prediction with CTC acoustic prediction
-        tdt_loss = tok_loss + 0.25 * dur_loss + 0.05 * (blank_logits[:, :, blank_id].pow(2).mean() * 0.0)
-
-        total_loss = 0.55 * ctc_loss + 0.25 * ctc_align_loss + 0.20 * tdt_loss
+        total_loss = ctc_loss + 0.30 * tdt_loss
         return total_loss, ctc_loss, tdt_loss, ctc_logits
