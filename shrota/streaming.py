@@ -116,22 +116,71 @@ def devanagari_edit_distance(a: str, b: str) -> int:
 
 
 _HARVESTED_LEXICON: dict[str, str] | None = None
+_CLEAN_VOCAB_FREQ: dict[str, int] | None = None
+
+HOMOPHONE_SWAPS = [
+    ("ि", "ी"),
+    ("ी", "ि"),
+    ("ु", "ू"),
+    ("ू", "ु"),
+    ("ब", "व"),
+    ("व", "ब"),
+    ("स", "श"),
+    ("स", "ष"),
+    ("श", "स"),
+    ("ष", "स"),
+    ("न", "ण"),
+    ("ण", "न"),
+    ("ं", "ँ"),
+    ("ँ", "ं"),
+    ("इ", "ई"),
+    ("ई", "इ"),
+    ("उ", "ऊ"),
+    ("ऊ", "उ"),
+]
 
 
-def get_harvested_lexicon() -> dict[str, str]:
-    global _HARVESTED_LEXICON
-    if _HARVESTED_LEXICON is None:
+def get_harvested_lexicon() -> tuple[dict[str, str], dict[str, int]]:
+    global _HARVESTED_LEXICON, _CLEAN_VOCAB_FREQ
+    if _HARVESTED_LEXICON is None or _CLEAN_VOCAB_FREQ is None:
         import json, os
         _HARVESTED_LEXICON = {}
+        _CLEAN_VOCAB_FREQ = {}
         for p in ("/work/shrota/checkpoints/shuddha_lexicon.json", "docs/models/shuddha_lexicon.json"):
             if os.path.exists(p):
                 try:
                     with open(p, "r", encoding="utf-8") as f:
-                        _HARVESTED_LEXICON.update(json.load(f))
+                        data = json.load(f)
+                        if isinstance(data, dict) and "pairs" in data:
+                            _HARVESTED_LEXICON.update(data["pairs"])
+                            _CLEAN_VOCAB_FREQ.update(data.get("vocab_freq", {}))
+                        elif isinstance(data, dict):
+                            _HARVESTED_LEXICON.update(data)
                     break
                 except Exception:
                     pass
-    return _HARVESTED_LEXICON
+    return _HARVESTED_LEXICON, _CLEAN_VOCAB_FREQ
+
+
+def resolve_homophone_word(w: str, harvested: dict[str, str], vocab_freq: dict[str, int]) -> str:
+    """Resolve 1-character Nepali hraswa-dirgha / sibilant / labial homophone if word is OOV."""
+    if w in harvested:
+        return harvested[w]
+    if w in NEPALI_SHUDDHA_LEXICON:
+        return NEPALI_SHUDDHA_LEXICON[w]
+    if not vocab_freq or vocab_freq.get(w, 0) >= 3:
+        return w
+    best_cand = w
+    best_freq = vocab_freq.get(w, 0) * 8
+    for i, ch in enumerate(w):
+        for src_c, dst_c in HOMOPHONE_SWAPS:
+            if ch == src_c:
+                cand = w[:i] + dst_c + w[i + 1 :]
+                cf = vocab_freq.get(cand, 0)
+                if cf > max(best_freq, 4):
+                    best_freq = cf
+                    best_cand = cand
+    return best_cand
 
 
 def clean_subword_stutter_and_matras(s: str, lang: str = "ne") -> str:
@@ -213,16 +262,13 @@ def apply_shuddha_refinement(
             s = clean_subword_stutter_and_matras(tokenizer.decode(safe_ids), lang=lang)
 
     # 2. Hraswa-dirgha lexicon cleanup and guarded postposition attachment
-    harvested = get_harvested_lexicon()
+    harvested, vocab_freq = get_harvested_lexicon()
     words = s.split()
     merged: list[str] = []
     for w in words:
         clean_w = w.rstrip("।,?!")
         trail_p = w[len(clean_w) :]
-        if clean_w in NEPALI_SHUDDHA_LEXICON:
-            clean_w = NEPALI_SHUDDHA_LEXICON[clean_w]
-        elif clean_w in harvested:
-            clean_w = harvested[clean_w]
+        clean_w = resolve_homophone_word(clean_w, harvested, vocab_freq)
         # Fix suffix -हरु -> -हरू (standard Nepal Academy dirgha plural)
         if lang == "ne" and clean_w.endswith("हरु") and len(clean_w) > 3:
             clean_w = clean_w[:-3] + "हरू"
@@ -230,9 +276,13 @@ def apply_shuddha_refinement(
             add_punct
             and lang == "ne"
             and merged
-            and clean_w in ("हरू", "हरूको", "हरूलाई", "हरूमा")
+            and clean_w in POSTPOSITIONS
             and not merged[-1].endswith(("।", ",", "?", "!", "हरू"))
             and not any(ch.isdigit() for ch in merged[-1])
+            and (
+                clean_w in ("हरू", "हरूको", "हरूलाई", "हरूमा")
+                or vocab_freq.get(merged[-1] + clean_w, 0) >= 3
+            )
         ):
             merged[-1] = merged[-1] + clean_w + trail_p
         else:

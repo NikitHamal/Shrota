@@ -180,10 +180,12 @@ def build_shuddha_training_pairs(
                 tot_c = sum(cnts.values())
                 if best_c >= 2 and best_c / tot_c >= 0.65 and clean_word_freq[hw] < best_c:
                     harvested_lex[hw] = best_rw
-            (CKPT_DIR / "shuddha_lexicon.json").write_text(json.dumps(harvested_lex, ensure_ascii=False, indent=2))
-            Path("/work/shrota/repo/docs/models/shuddha_lexicon.json").write_text(json.dumps(harvested_lex, ensure_ascii=False, indent=2))
+            top_vocab_freq = {w: c for w, c in clean_word_freq.most_common(12000) if c >= 3}
+            lex_payload = {"pairs": harvested_lex, "vocab_freq": top_vocab_freq}
+            (CKPT_DIR / "shuddha_lexicon.json").write_text(json.dumps(lex_payload, ensure_ascii=False))
+            Path("/work/shrota/repo/docs/models/shuddha_lexicon.json").write_text(json.dumps(lex_payload, ensure_ascii=False))
             del asr_base
-            print(f"[Shrota-Shuddha] Harvested {len(real_asr_pairs)} exact-length subword pairs & {len(harvested_lex)} word pairs.", flush=True)
+            print(f"[Shrota-Shuddha] Harvested {len(real_asr_pairs)} subword pairs, {len(harvested_lex)} acoustic pairs & {len(top_vocab_freq)} vocab words.", flush=True)
         except Exception as e:
             print(f"[Shrota-Shuddha] Note on acoustic harvest: {e}", flush=True)
 
