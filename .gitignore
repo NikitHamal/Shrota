@@ -39,5 +39,5 @@ venv/
 logs/
 data/
 /tmp/
-*token*
+/tmp/*token*
 gitenv.sh
